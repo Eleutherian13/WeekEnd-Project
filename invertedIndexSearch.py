@@ -16,9 +16,12 @@ for doc_id , content in documents.items() :
 
     for word in words : 
         if word in inverted_index : 
-            inverted_index[word].append(doc_id)
+            inverted_index[word].add(doc_id)
         else : 
-            inverted_index[word] = [doc_id]
+            inverted_index[word] = set()
+
+            inverted_index[word].add(doc_id)
+
 
 
 print(inverted_index)
@@ -39,3 +42,44 @@ print(results)
 #  'banana': [1, 2],
 #  'orange': [2, 3]
 # }
+
+# query = "apple AND orange"
+def inverted_index_and(query) :
+    terms = query.lower().split(" and ")
+
+    print(terms)
+
+    result = None 
+
+    left = set(inverted_index.get(terms[0] , []))
+    right = set(inverted_index.get(terms[1] , []))
+
+    if left and right : 
+        result = left & right 
+
+    return result 
+
+print("This is the output we are searching for exisits in the document number : ")
+print(inverted_index_and("apple AND orange"))
+
+
+
+def inverted_index_or(query) :
+
+    terms = query.lower().split(" or ")
+
+    result = None 
+
+    left = set(inverted_index.get(terms[0] , []))
+    right = set(inverted_index.get(terms[1] , []))
+
+    if left and right : 
+        result = left | right 
+
+    return result 
+
+print("This is the output we are searching for exisits in the document number : ")
+print(inverted_index_or("apple OR orange"))
+
+
+
