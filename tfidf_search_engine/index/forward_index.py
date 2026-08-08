@@ -16,6 +16,12 @@ class ForwardIndex :
 
         return self._document.get(document_id)
 
+    def get_document_length(self, document_id: int) -> int:
+        document = self.get_document(document_id)
+        if document is None:
+            return 0
+        return sum(document.values())
+
     def get_term_frequency(self, document_id : int , term : str) -> int | None : 
 
         document = self._document.get(document_id)

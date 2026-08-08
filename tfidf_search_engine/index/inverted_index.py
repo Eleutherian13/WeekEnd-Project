@@ -18,6 +18,9 @@ class InvertedIndex:
     def get_postings(self, term: str) -> PostingList | None:
         return self._index.get(term)
 
+    def get(self, term: str) -> PostingList | None:
+        return self._index.get(term)
+
     def __contains__(self, term: str) -> bool:
         return term in self._index
 
