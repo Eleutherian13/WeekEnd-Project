@@ -37,6 +37,9 @@ class ForwardIndex :
     def __repr__(self) -> str :
         return f"{self.__class__.__name__}()"
 
+    def document_ids(self) : 
+        return self._document.keys()
+
 if __name__ == "__main__" :
     forward_index = ForwardIndex()
 
