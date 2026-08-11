@@ -1,25 +1,39 @@
 from analysis.analyzer import Analyzer
-# Inside query_processing.py
 from query.query import Query
 
-class QueryProcessor :
 
-    def __init__(self , analyzer : Analyzer )  : 
+class QueryProcessor:
+    """
+    Converts a Query into analyzed search terms.
+    """
 
-        self.analyzer = analyzer 
+    def __init__(self, analyzer: Analyzer) -> None:
 
+        if not isinstance(analyzer, Analyzer):
+            raise TypeError(
+                "analyzer must be an Analyzer"
+            )
 
-    def process(self , query : Query ) -> list[str] : 
+        self.analyzer = analyzer
+
+    def process(
+        self,
+        query: Query,
+    ) -> list[str]:
+
+        if not isinstance(query, Query):
+            raise TypeError(
+                "query must be a Query"
+            )
 
         return self.analyzer(query.text)
 
-    def __call__(self , query : Query ) -> list[str] :
+    def __call__(
+        self,
+        query: Query,
+    ) -> list[str]:
+
         return self.process(query)
 
-if __name__ == "__main__" :
-    analyzer = Analyzer()
-    processor = QueryProcessor(analyzer)
-    query = Query("Machine Learning!!")
-    terms = processor.process(query)
-    print("Raw query:", query.text)
-
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}()"

@@ -5,6 +5,9 @@ class Vocabulary :
 
     def add(self , term : str )-> int: 
 
+        if not isinstance(term , str) : 
+            raise TypeError("term must be a string")
+
         if term  in self._terms : 
             return self._terms[term]
 

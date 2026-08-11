@@ -30,6 +30,16 @@ class IndexBuilder:
         vocabulary: Vocabulary,
         inverted_index: InvertedIndex
     ):
+        if not isinstance(analyzer , Analyzer) :
+            raise TypeError("analyzer must be an Analyzer")
+
+        if not isinstance(vocabulary , Vocabulary) :
+            raise TypeError("vocabulary must be a Vocabulary")
+
+        if not isinstance(inverted_index , InvertedIndex) :
+            raise TypeError("inverted_index must be an InvertedIndex")
+
+
         self.analyzer = analyzer
         self.vocabulary = vocabulary
         self.inverted_index = inverted_index
@@ -46,12 +56,25 @@ class IndexBuilder:
             self.inverted_index
         )
 
+
     def add_document(
         self,
         document_id: int,
         text: str
     ) -> None:
+        if not isinstance(document_id , int ) :
+            raise TypeError("document_id must be an integer")
 
+        if document_id < 0 :
+            raise ValueError("document_id must be a positive integer")
+
+        if not isinstance(text , str ) :
+            raise TypeError("text must be a string")
+
+        if self.forward_index.contains(document_id) :
+            raise ValueError("document_id must be unique")
+
+        
         # --------------------------------------------------
         # 1. Analyze the document
         # --------------------------------------------------

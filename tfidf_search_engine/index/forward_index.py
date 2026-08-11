@@ -1,5 +1,4 @@
 
-
 class ForwardIndex : 
 
     def __init__(self ) : 
@@ -8,6 +7,18 @@ class ForwardIndex :
 
 
     def add_document(self, document_id : int , term_frequency : dict[str , int]) -> None: 
+
+        if not isinstance(document_id , int ) : 
+            raise TypeError("document_id must be an integer")
+
+        if document_id < 0 :
+            raise ValueError("document_id must be a positive integer")
+
+        if not isinstance(term_frequency , dict) :
+            raise TypeError("term_frequency must be a dictionary")
+
+        if not all(isinstance(key , str) for key in term_frequency.keys()) :
+            raise TypeError("term_frequency keys must be strings")
 
         self._document[document_id] = dict(term_frequency)
 

@@ -1,12 +1,25 @@
-from posting import Posting
-from posting_list import PostingList
-
+try:
+    from .posting import Posting
+    from .posting_list import PostingList
+except ImportError:  # pragma: no cover - allows direct script execution
+    from posting import Posting
+    from posting_list import PostingList
 
 class InvertedIndex:
     def __init__(self):
         self._index: dict[str, PostingList] = {}
 
     def add(self, term: str, posting: Posting) -> None:
+
+        # these are just the lines for type checks nothing else 
+        
+        if not isinstance(term , str) : 
+            raise TypeError("term must be a string")
+
+        if not isinstance(posting , Posting) : 
+            raise TypeError("posting must be a Posting")
+
+        
         if term not in self._index:
             self._index[term] = PostingList()
 

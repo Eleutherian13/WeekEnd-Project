@@ -6,8 +6,20 @@ class Lemmatizer:
         self.lemmatizer = WordNetLemmatizer()
 
     def lemmatize(self, tokens: list[str]) -> list[str]:
+
+
+        if not isinstance(tokens , list) : 
+            raise TypeError("tokens must be a list")
         # Apply lemmatization to each token
+
+
         return [self.lemmatizer.lemmatize(token) for token in tokens]
+
+
+    def process(self , tokens : list[str]) -> list[str] : 
+        return self.lemmatize(tokens)
+
+    
 
     def __call__(self, tokens: list[str]) -> list[str]:
         # Allow the object to be called like a function

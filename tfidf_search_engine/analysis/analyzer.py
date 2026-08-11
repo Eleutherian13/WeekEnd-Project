@@ -21,6 +21,10 @@ class Analyzer :
 
     def analyze(self , text : str) -> list[str] : 
 
+            
+        if not isinstance(text, str):
+            raise TypeError("text must be a string")
+
         tokens = self.tokenizer(text)
 
         tokens = self.normalizer(tokens)

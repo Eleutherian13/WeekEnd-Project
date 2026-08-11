@@ -9,6 +9,10 @@ class Stemmer:
         # Apply stemming to each token
         return [self.stemmer.stem(token) for token in tokens]
 
+
+    def process(self , tokens : list[str] ) -> list[str] : 
+        return self.stem(tokens)
+
     def __call__(self, tokens: list[str]) -> list[str]:
         # Allow the object to be called like a function
         return self.stem(tokens)
@@ -21,3 +25,4 @@ if __name__ == "__main__":
     stemmer = Stemmer()
     tokens = ["running", "runs", "studies", "study"]
     print(stemmer.stem(tokens))
+

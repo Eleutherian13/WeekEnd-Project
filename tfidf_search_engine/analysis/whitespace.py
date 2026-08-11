@@ -1,10 +1,11 @@
-from analysis.tokenizer import Tokenizer
+from .tokenizer import Tokenizer 
 
+class WhitespaceTokenizer(Tokenizer) : 
 
-class WhitespaceTokenizer(Tokenizer):
-    """
-    Tokenizes using whitespace.
-    """
+    def tokenize(self , text : str) -> list[str] : 
 
-    def tokenize(self, text: str) -> list[str]:
+        if not isinstance(text , str ) :
+
+            raise TypeError("text must be a string")
+
         return text.split()
