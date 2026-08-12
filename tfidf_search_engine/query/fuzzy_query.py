@@ -222,3 +222,6 @@ class FuzzyQuery:
             f"{self.max_distance!r}"
             f")"
         )
+
+
+    

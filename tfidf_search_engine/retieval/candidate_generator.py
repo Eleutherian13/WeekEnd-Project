@@ -1,58 +1,77 @@
-try:
-    from index.inverted_index import InvertedIndex
-except ImportError:  # pragma: no cover - allows direct script execution
-    from ..index.inverted_index import InvertedIndex
+
+from index.inverted_index import InvertedIndex
 
 
-class CandidateGenerator: 
 
-    def __init__(self , inverted_index : InvertedIndex) :
+class CandidateGenerator:
+    """
+    Generates candidate document IDs from
+    already-processed query terms using
+    an inverted index.
+    """
+
+    def __init__(
+        self,
+        inverted_index: InvertedIndex,
+    ) -> None:
+
+        if not isinstance(
+            inverted_index,
+            InvertedIndex,
+        ):
+            raise TypeError(
+                "inverted_index must be an InvertedIndex"
+            )
+
         self.inverted_index = inverted_index
 
-    def _get_document_ids(self , term: list[str]) -> set[int] :
+    def generate(
+        self,
+        terms: list[str],
+    ) -> set[int]:
 
-        posting_list = self.inverted_index.get(term)
+        if not isinstance(terms, list):
+            raise TypeError(
+                "terms must be a list"
+            )
 
-        if posting_list is None : 
+        if not all(
+            isinstance(term, str)
+            for term in terms
+        ):
+            raise TypeError(
+                "terms must contain only strings"
+            )
 
-            return set()
+        candidate_documents: set[int] = set()
 
+        for term in terms:
 
-        return {
-            posting.document_id for posting in posting_list 
-        } 
+            if not self.inverted_index.contain(term):
+                continue
 
-    def or_retrive(self , terms : str ) -> set[int] : 
+            posting_list = (
+                self.inverted_index.get_postings(term)
+            )
 
-        candidates : set[int] = set()
+            for posting in posting_list:
+                candidate_documents.add(
+                    posting.document_id
+                )
 
-        for term in terms : 
+        return candidate_documents
 
-            candidates.update(self._get_document_ids(term))
+    def __call__(
+        self,
+        terms: list[str],
+    ) -> set[int]:
 
-        return candidates 
+        return self.generate(terms)
 
-    def and_retrieve(self , terms : list[str]) -> set[int] : 
+    def __repr__(self) -> str:
 
-        if not terms:
-            return set()
-
-        candidates = self._get_document_ids(terms[0])
-
-        for term in terms[1: ] : 
-
-            candidates = candidates & self._get_document_ids(term)
-
-        return candidates 
-
-
-    def __call__(self , terms : list[str] ) -> set[int] :
-        return self.and_retrieve(terms)
-
-    def __repr__(self) -> str :
-        return f"{self.__class__.__name__}()"
-
-
-
-
-
+        return (
+            f"{self.__class__.__name__}("
+            f"inverted_index={self.inverted_index!r}"
+            f")"
+        )

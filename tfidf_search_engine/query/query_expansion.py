@@ -51,6 +51,7 @@ class QueryExpander:
 
         if not all(
             isinstance(term, str)
+            
             for term in terms
         ):
             raise TypeError(

@@ -6,12 +6,7 @@ class PhraseQuery:
     Represents a phrase query.
 
     Example:
-
         "machine learning"
-
-    Internally:
-
-        ["machine", "learning"]
 
     A document matches only when the terms occur
     consecutively and in the correct order.
@@ -63,9 +58,7 @@ class PhraseQuery:
 
         for term in self.terms:
 
-            documents = (
-                positional_index.get_documents(term)
-            )
+            documents = positional_index.get_documents(term)
 
             if documents is None:
                 return set()
@@ -104,18 +97,28 @@ class PhraseQuery:
     ) -> bool:
 
         # --------------------------------------------------
+        # Build hashed position sets
+        # --------------------------------------------------
+
+        position_sets = {}
+
+        for term in self.terms:
+
+            positions = positional_index.get_positions(
+                term,
+                document_id,
+            )
+
+            if positions is None:
+                return False
+
+            position_sets[term] = set(positions)
+
+        # --------------------------------------------------
         # Positions of the first term
         # --------------------------------------------------
 
-        first_positions = (
-            positional_index.get_positions(
-                self.terms[0],
-                document_id,
-            )
-        )
-
-        if first_positions is None:
-            return False
+        first_positions = position_sets[self.terms[0]]
 
         # --------------------------------------------------
         # Try every possible starting position
@@ -134,18 +137,7 @@ class PhraseQuery:
                     start_position + offset
                 )
 
-                positions = (
-                    positional_index.get_positions(
-                        term,
-                        document_id,
-                    )
-                )
-
-                if positions is None:
-                    matches = False
-                    break
-
-                if expected_position not in positions:
+                if expected_position not in position_sets[term]:
                     matches = False
                     break
 
@@ -160,5 +152,3 @@ class PhraseQuery:
             f"{self.__class__.__name__}"
             f"({self.terms!r})"
         )
-
-    
