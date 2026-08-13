@@ -1,3 +1,5 @@
+from analysis.stemmer import Stemmer
+
 
 class ForwardIndex : 
 
@@ -40,9 +42,15 @@ class ForwardIndex :
         if document is None : 
             return 0 
 
-        else : 
+        value = document.get(term, None)
+        if value is not None:
+            return value
 
-            return document.get(term  , 0)
+        stemmed_term = Stemmer().stem([term])[0]
+        if stemmed_term == term:
+            return 0
+
+        return document.get(stemmed_term, 0)
 
     def contains(self , document_id : int ) -> bool : 
         return document_id in self._document

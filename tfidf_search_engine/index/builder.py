@@ -12,6 +12,7 @@ if __package__ in (None, ""):
 
 
 from analysis.analyzer import Analyzer
+from document.documents import Document
 
 from index.posting import Posting
 from index.posting_list import PostingList
@@ -59,19 +60,27 @@ class IndexBuilder:
 
     def add_document(
         self,
-        document_id: int,
-        text: str
+        document_id: int | Document,
+        text: str | None = None,
     ) -> None:
-        if not isinstance(document_id , int ) :
-            raise TypeError("document_id must be an integer")
+        if isinstance(document_id, Document):
+            document = document_id
+            document_id = document.document_id
+            text = document.text
+        else:
+            if not isinstance(document_id, int):
+                raise TypeError("document_id must be an integer")
 
-        if document_id < 0 :
-            raise ValueError("document_id must be a positive integer")
+            if document_id < 0:
+                raise ValueError("document_id must be a positive integer")
 
-        if not isinstance(text , str ) :
+            if text is None:
+                raise TypeError("text must be provided")
+
+        if not isinstance(text, str):
             raise TypeError("text must be a string")
 
-        if self.forward_index.contains(document_id) :
+        if self.forward_index.contains(document_id):
             raise ValueError("document_id must be unique")
 
         
@@ -134,6 +143,9 @@ class IndexBuilder:
                 self.inverted_index[term] = PostingList()
 
                 self.inverted_index[term].add(posting)
+
+    def build(self):
+        return self
 
 
 if __name__ == "__main__":

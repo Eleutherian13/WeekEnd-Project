@@ -1,3 +1,4 @@
+from analysis.stemmer import Stemmer
 from index.forward_index import ForwardIndex
 from index.inverted_index import InvertedIndex
 
@@ -57,7 +58,14 @@ class Statistics:
         """
 
         posting_list = self.inverted_index.get(term)
+        if posting_list is not None:
+            return len(posting_list)
 
+        stemmed_term = Stemmer().stem([term])[0]
+        if stemmed_term == term:
+            return 0
+
+        posting_list = self.inverted_index.get(stemmed_term)
         if posting_list is None:
             return 0
 
