@@ -1,368 +1,202 @@
-from analysis.analyzer import Analyzer
-from index.builder import IndexBuilder
-from index.vocabulary import Vocabulary
 from index.inverted_index import InvertedIndex
-from ranking.bm25 import BM25
+from index.posting import Posting
+from index.posting_list import PostingList
+from retieval.candidate_generator import CandidateGenerator
 
 
-analyzer = Analyzer()
+def test_candidate_generator():
+    print("\n=== CANDIDATE GENERATOR TEST ===")
 
-vocabulary = Vocabulary()
-inverted_index = InvertedIndex()
+    # ---------------------------------------------------------
+    # 1. Build a small inverted index from scratch
+    # ---------------------------------------------------------
 
-builder = IndexBuilder(
-    analyzer=analyzer,
-    vocabulary=vocabulary,
-    inverted_index=inverted_index,
-)
+    inverted_index = InvertedIndex()
 
-
-documents = {
-    1: "machine learning is amazing",
-    2: "deep learning powers artificial intelligence",
-    3: "machine learning uses neural networks",
-    4: "cats chase mice",
-    5: "dogs chase cats",
-    6: "deep neural networks power AI",
-}
-
-
-for document_id, text in documents.items():
-
-    builder.add_document(
-        document_id,
-        text,
-    )
-
-
-bm25 = BM25(
-    forward_index=builder.forward_index,
-    statistics=builder.statistics,
-)
-
-
-query_terms = [
-    "machine",
-    "learning",
-]
-
-
-print("\nBM25 PARAMETERS")
-print("----------------")
-print("k1:", bm25.k1)
-print("b:", bm25.b)
-
-
-print("\nBM25 IDF")
-print("--------")
-print(
-    "machine:",
-    bm25.inverse_document_frequency(
-        "machine"
-    ),
-)
-print(
-    "learning:",
-    bm25.inverse_document_frequency(
-        "learning"
-    ),
-)
-
-
-print("\nTERM SCORES")
-print("-----------")
-
-for document_id in documents:
-
-    machine_score = bm25.score(
+    # machine -> documents 1 and 3
+    inverted_index.add(
         "machine",
-        document_id,
+        Posting(document_id=1, term_frequency=1),
     )
 
-    learning_score = bm25.score(
+    inverted_index.add(
+        "machine",
+        Posting(document_id=3, term_frequency=1),
+    )
+
+    # learning -> documents 1, 2 and 3
+    inverted_index.add(
         "learning",
-        document_id,
+        Posting(document_id=1, term_frequency=1),
     )
 
-    print(
-        f"Document {document_id}: "
-        f"machine={machine_score:.4f}, "
-        f"learning={learning_score:.4f}"
+    inverted_index.add(
+        "learning",
+        Posting(document_id=2, term_frequency=1),
     )
 
-
-print("\nDOCUMENT SCORES")
-print("---------------")
-
-scores = {}
-
-for document_id in documents:
-
-    score = bm25.score_document(
-        query_terms,
-        document_id,
+    inverted_index.add(
+        "learning",
+        Posting(document_id=3, term_frequency=1),
     )
 
-    scores[document_id] = score
+    # ---------------------------------------------------------
+    # 2. Create CandidateGenerator
+    # ---------------------------------------------------------
 
-    print(
-        f"Document {document_id}: "
-        f"{score:.4f}"
+    candidate_generator = CandidateGenerator(
+        inverted_index=inverted_index
     )
 
+    # ---------------------------------------------------------
+    # 3. Single-term candidate generation
+    # ---------------------------------------------------------
 
-print("\nRANKED DOCUMENTS")
-print("----------------")
+    candidates = candidate_generator.generate(["machine"])
 
-ranked_documents = sorted(
-    scores.items(),
-    key=lambda item: item[1],
-    reverse=True,
-)
+    print("machine candidates:")
+    print(candidates)
 
-for document_id, score in ranked_documents:
+    assert candidates == {1, 3}
 
-    print(
-        f"Document {document_id}: "
-        f"{score:.4f} | "
-        f"{documents[document_id]}"
+    print("✓ Single-term candidate generation passed")
+
+    # ---------------------------------------------------------
+    # 4. Multi-term candidate generation
+    # ---------------------------------------------------------
+
+    candidates = candidate_generator.generate(
+        ["machine", "learning"]
     )
 
+    print("\nmachine + learning candidates:")
+    print(candidates)
 
-import math
+    assert candidates == {1, 2, 3}
 
-from ranking.fusion import ScoreFusion
+    print("✓ Multi-term OR candidate generation passed")
 
+    # ---------------------------------------------------------
+    # 5. Unknown term
+    # ---------------------------------------------------------
 
-def test_score_fusion() -> None:
-
-    fusion = ScoreFusion(
-        weights={
-            "bm25": 0.7,
-            "dense": 0.3,
-        }
+    candidates = candidate_generator.generate(
+        ["nonexistent"]
     )
 
-    scores = {
-        "bm25": {
-            1: 2.0,
-            2: 5.0,
-            3: 8.0,
-        },
-        "dense": {
-            1: 0.9,
-            2: 0.6,
-            3: 0.3,
-        },
-    }
+    print("\nnonexistent candidates:")
+    print(candidates)
 
-    normalized_bm25 = fusion.normalize(
-        scores["bm25"]
+    assert candidates == set()
+
+    print("✓ Unknown-term handling passed")
+
+    # ---------------------------------------------------------
+    # 6. Known + unknown term
+    # ---------------------------------------------------------
+
+    candidates = candidate_generator.generate(
+        ["machine", "nonexistent"]
     )
 
-    normalized_dense = fusion.normalize(
-        scores["dense"]
+    print("\nmachine + nonexistent candidates:")
+    print(candidates)
+
+    assert candidates == {1, 3}
+
+    print("✓ Known + unknown term handling passed")
+
+    # ---------------------------------------------------------
+    # 7. Empty query
+    # ---------------------------------------------------------
+
+    candidates = candidate_generator.generate([])
+
+    print("\nempty query candidates:")
+    print(candidates)
+
+    assert candidates == set()
+
+    print("✓ Empty-query handling passed")
+
+    # ---------------------------------------------------------
+    # 8. Whitespace handling
+    # ---------------------------------------------------------
+
+    candidates = candidate_generator.generate(
+        [" machine "]
     )
 
-    fused_scores = fusion.fuse(
-        scores
+    print("\nwhitespace-normalized term candidates:")
+    print(candidates)
+
+    assert candidates == {1, 3}
+
+    print("✓ Whitespace handling passed")
+
+    # ---------------------------------------------------------
+    # 9. Empty strings
+    # ---------------------------------------------------------
+
+    candidates = candidate_generator.generate(
+        ["", "   ", "machine"]
     )
 
-    print("\n=== SCORE FUSION TEST ===")
+    print("\nempty-string candidates:")
+    print(candidates)
 
-    print("\nWeights:")
-    print(fusion.weights)
+    assert candidates == {1, 3}
 
-    print("\nBM25 scores:")
-    print(scores["bm25"])
+    print("✓ Empty-string handling passed")
 
-    print("\nNormalized BM25:")
-    print(normalized_bm25)
+    # ---------------------------------------------------------
+    # 10. Callable interface
+    # ---------------------------------------------------------
 
-    print("\nDense scores:")
-    print(scores["dense"])
+    candidates = candidate_generator(
+        ["learning"]
+    )
 
-    print("\nNormalized Dense:")
-    print(normalized_dense)
+    print("\ncallable interface candidates:")
+    print(candidates)
 
-    print("\nFused scores:")
-    print(fused_scores)
+    assert candidates == {1, 2, 3}
 
-    expected = {
-        1: 0.3,
-        2: 0.5,
-        3: 0.7,
-    }
+    print("✓ Callable interface passed")
 
-    for document_id, expected_score in expected.items():
+    # ---------------------------------------------------------
+    # 11. None validation
+    # ---------------------------------------------------------
 
-        assert math.isclose(
-            fused_scores[document_id],
-            expected_score,
-            rel_tol=1e-9,
-            abs_tol=1e-9,
+    try:
+        candidate_generator.generate(None)
+        assert False, "Expected TypeError for None"
+    except TypeError:
+        print("✓ None validation passed")
+
+    # ---------------------------------------------------------
+    # 12. Invalid query term validation
+    # ---------------------------------------------------------
+
+    try:
+        candidate_generator.generate(
+            ["machine", 123]
         )
+        assert False, "Expected TypeError for non-string term"
+    except TypeError:
+        print("✓ Invalid-term validation passed")
 
-    print("\n✓ Score fusion test passed")
+    # ---------------------------------------------------------
+    # 13. Constructor validation
+    # ---------------------------------------------------------
 
-    callable_scores = fusion(scores)
+    try:
+        CandidateGenerator(None)
+        assert False, "Expected TypeError for invalid inverted index"
+    except TypeError:
+        print("✓ Constructor validation passed")
 
-    for document_id, expected_score in expected.items():
-
-        assert math.isclose(
-            callable_scores[document_id],
-            expected_score,
-            rel_tol=1e-9,
-            abs_tol=1e-9,
-        )
-
-    print("✓ Callable interface test passed")
-
-    identical_scores = {
-        1: 5.0,
-        2: 5.0,
-        3: 5.0,
-    }
-
-    normalized = fusion.normalize(
-        identical_scores
-    )
-
-    assert normalized == {
-        1: 0.0,
-        2: 0.0,
-        3: 0.0,
-    }
-
-    print("✓ Equal-score normalization test passed")
-
-    assert fusion.normalize({}) == {}
-
-    assert fusion.fuse({}) == {}
-
-    print("✓ Empty-score test passed")
-
-from ranking.reranker import Reranker
-
-
-def test_reranker() -> None:
-
-    scores = {
-        1: 0.72,
-        2: 0.91,
-        3: 0.83,
-        4: 0.91,
-    }
-
-    reranker = Reranker()
-
-    results = reranker.rerank(
-        scores,
-        top_k=3,
-    )
-
-    print("\nReranker test")
-    print("Input scores:")
-    print(scores)
-
-    print("Ranked results:")
-    print(results)
-
-    assert results == [
-        (2, 0.91),
-        (4, 0.91),
-        (3, 0.83),
-    ]
-
-    print("Reranker test passed.")
-    
-
-    from ranking.reranker import Reranker
-
-
-def test_reranker() -> None:
-
-    scores = {
-        1: 0.72,
-        2: 0.91,
-        3: 0.83,
-        4: 0.91,
-    }
-
-    reranker = Reranker()
-
-    results = reranker.rerank(
-        scores,
-        top_k=3,
-    )
-
-    print("\n=== RERANKER TEST ===")
-
-    print("\nInput scores:")
-    print(scores)
-
-    print("\nRanked results:")
-    print(results)
-
-    expected = [
-        (2, 0.91),
-        (4, 0.91),
-        (3, 0.83),
-    ]
-
-    assert results == expected
-
-    print("\n✓ Reranking test passed")
-
-    callable_results = reranker(
-        scores,
-        top_k=2,
-    )
-
-    expected_callable_results = [
-        (2, 0.91),
-        (4, 0.91),
-    ]
-
-    assert callable_results == expected_callable_results
-
-    print("✓ Callable interface test passed")
-
-    all_results = reranker.rerank(
-        scores
-    )
-
-    expected_all_results = [
-        (2, 0.91),
-        (4, 0.91),
-        (3, 0.83),
-        (1, 0.72),
-    ]
-
-    assert all_results == expected_all_results
-
-    print("✓ Full ranking test passed")
-
-    empty_results = reranker.rerank(
-        {}
-    )
-
-    assert empty_results == []
-
-    print("✓ Empty-score test passed")
-
-    zero_results = reranker.rerank(
-        scores,
-        top_k=0,
-    )
-
-    assert zero_results == []
-
-    print("✓ Zero Top-K test passed")
-
+    print("\n✓ ALL CANDIDATE GENERATOR TESTS PASSED")
 
 if __name__ == "__main__":
-    test_score_fusion()
-    test_reranker()
-
-    print("All tests passed.")
+    test_candidate_generator()

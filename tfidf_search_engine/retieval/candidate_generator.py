@@ -1,77 +1,92 @@
+# `retrieval/candidate_generator.py`
+
+from __future__ import annotations
+
+from collections.abc import Iterable
 
 from index.inverted_index import InvertedIndex
 
 
-
 class CandidateGenerator:
     """
-    Generates candidate document IDs from
-    already-processed query terms using
-    an inverted index.
+    Generate candidate document IDs from processed query terms.
+
+    Candidate generation answers:
+
+        "Which documents should be considered for ranking?"
+
+    It does not calculate relevance scores.
+
+    Parameters
+    ----------
+    inverted_index:
+        Existing inverted index used to retrieve posting lists for terms.
     """
 
-    def __init__(
-        self,
-        inverted_index: InvertedIndex,
-    ) -> None:
-
-        if not isinstance(
-            inverted_index,
-            InvertedIndex,
-        ):
+    def __init__(self, inverted_index: InvertedIndex) -> None:
+        if not isinstance(inverted_index, InvertedIndex):
             raise TypeError(
-                "inverted_index must be an InvertedIndex"
+                "inverted_index must be an instance of InvertedIndex."
             )
 
         self.inverted_index = inverted_index
 
-    def generate(
-        self,
-        terms: list[str],
-    ) -> set[int]:
+    def generate(self, query_terms: Iterable[str]) -> set[int]:
+        """
+        Generate candidate document IDs for the supplied query terms.
 
-        if not isinstance(terms, list):
-            raise TypeError(
-                "terms must be a list"
-            )
+        Candidate generation uses OR semantics:
 
-        if not all(
-            isinstance(term, str)
-            for term in terms
-        ):
-            raise TypeError(
-                "terms must contain only strings"
-            )
+            candidates =
+                postings(term_1)
+                UNION
+                postings(term_2)
+                UNION
+                ...
 
-        candidate_documents: set[int] = set()
+        Parameters
+        ----------
+        query_terms:
+            Already processed query terms.
 
-        for term in terms:
+        Returns
+        -------
+        set[int]
+            Unique candidate document IDs.
+        """
+
+        if query_terms is None:
+            raise TypeError("query_terms cannot be None.")
+
+        candidates: set[int] = set()
+
+        for term in query_terms:
+            if not isinstance(term, str):
+                raise TypeError("Every query term must be a string.")
+
+            term = term.strip()
+
+            if not term:
+                continue
 
             if not self.inverted_index.contain(term):
                 continue
 
-            posting_list = (
-                self.inverted_index.get_postings(term)
-            )
+            posting_list = self.inverted_index.get_postings(term)
 
             for posting in posting_list:
-                candidate_documents.add(
-                    posting.document_id
-                )
+                candidates.add(posting.document_id)
 
-        return candidate_documents
+        return candidates
 
-    def __call__(
-        self,
-        terms: list[str],
-    ) -> set[int]:
-
-        return self.generate(terms)
+    def __call__(self, query_terms: Iterable[str]) -> set[int]:
+        """
+        Callable interface for candidate generation.
+        """
+        return self.generate(query_terms)
 
     def __repr__(self) -> str:
-
         return (
-            f"{self.__class__.__name__}("
-            f"inverted_index={self.inverted_index!r}"
-            f")"
+            f"CandidateGenerator("
+            f"inverted_index={self.inverted_index!r})"
         )
