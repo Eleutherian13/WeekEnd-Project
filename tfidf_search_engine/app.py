@@ -1,7 +1,11 @@
 from index.inverted_index import InvertedIndex
 from index.posting import Posting
 from index.posting_list import PostingList
+from index.builder import IndexBuilder
+from index.vocabulary import Vocabulary
 from retieval.candidate_generator import CandidateGenerator
+from retieval.lexical.retriever import LexicalRetriever
+from analysis.analyzer import Analyzer
 
 
 def test_candidate_generator():
@@ -198,5 +202,77 @@ def test_candidate_generator():
 
     print("\n✓ ALL CANDIDATE GENERATOR TESTS PASSED")
 
+
+class DummyLexicalRetriever(LexicalRetriever):
+    """
+    Temporary test implementation used only to verify
+    the LexicalRetriever abstraction.
+    """
+
+    def retrieve(self, query_terms):
+        candidates = self.candidate_generator.generate(query_terms)
+
+        return [
+            (document_id, 1.0)
+            for document_id in sorted(candidates)
+        ]
+
+
+def test_lexical_retriever(builder):
+    candidate_generator = CandidateGenerator(
+        inverted_index=builder.inverted_index
+    )
+
+    retriever = DummyLexicalRetriever(
+        candidate_generator=candidate_generator
+    )
+
+    results = retriever.retrieve(
+        ["machine", "learning"]
+    )
+
+    print("Retriever results:", results)
+
+    assert results == [
+        (1, 1.0),
+        (2, 1.0),
+        (3, 1.0),
+    ]
+
+    # Test callable interface.
+    results = retriever(["machine"])
+
+    assert results == [
+        (1, 1.0),
+        (3, 1.0),
+    ]
+
+    print("LexicalRetriever contract tests passed.")
+
+
 if __name__ == "__main__":
     test_candidate_generator()
+    
+    # Create a simple builder for testing lexical retriever
+    analyzer = Analyzer()
+    vocabulary = Vocabulary()
+    inverted_index = InvertedIndex()
+    builder = IndexBuilder(
+        analyzer=analyzer,
+        vocabulary=vocabulary,
+        inverted_index=inverted_index
+    )
+    
+    # Add sample documents to the builder's inverted index
+    # Document 1: contains "machine" and "learning"
+    inverted_index.add("machine", Posting(document_id=1, term_frequency=1))
+    inverted_index.add("learning", Posting(document_id=1, term_frequency=1))
+    
+    # Document 2: contains "learning"
+    inverted_index.add("learning", Posting(document_id=2, term_frequency=1))
+    
+    # Document 3: contains "machine" and "learning"
+    inverted_index.add("machine", Posting(document_id=3, term_frequency=1))
+    inverted_index.add("learning", Posting(document_id=3, term_frequency=1))
+    
+    test_lexical_retriever(builder)
