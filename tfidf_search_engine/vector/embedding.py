@@ -11,6 +11,10 @@ Number = int | float
 class EmbeddingModel(ABC):
     """
     Abstract interface for text embedding implementations.
+
+    Every concrete embedding model must implement `embed()`.
+    Concrete models may override `embed_batch()` when they support
+    efficient model-level batching.
     """
 
     @abstractmethod
@@ -28,11 +32,11 @@ class EmbeddingModel(ABC):
         texts: Sequence[str],
     ) -> list[list[float]]:
         """
-        Embed multiple texts.
+        Generate embeddings for multiple texts.
 
-        The default implementation calls `embed()` for each
-        text. Concrete implementations can override this method
-        to use efficient model-level batching.
+        The default implementation calls `embed()` for every text.
+        Concrete implementations should override this when the
+        underlying model supports efficient batching.
         """
 
         if not isinstance(texts, Sequence):
@@ -46,7 +50,9 @@ class EmbeddingModel(ABC):
         ]
 
     @staticmethod
-    def _validate_text(text: str) -> str:
+    def _validate_text(
+        text: str,
+    ) -> str:
         """
         Validate and normalize input text.
         """
@@ -71,6 +77,8 @@ class EmbeddingModel(ABC):
     ) -> list[float]:
         """
         Validate and normalize an embedding vector.
+
+        Every value must be numeric and finite.
         """
 
         if not isinstance(embedding, Sequence):

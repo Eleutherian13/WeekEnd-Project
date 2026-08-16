@@ -1,88 +1,190 @@
-from __future__ import annotations 
-import math 
+from __future__ import annotations
+
+import math
 from collections.abc import Sequence
 
 
-Number = int | float 
+Number = int | float
 
-class VectorSimilarity : 
 
-    @staticmethod 
-    def _validate_vector(vector : Sequence[Number] , name : str = "vector") -> list[float] : 
+class VectorSimilarity:
+    """
+    Mathematical operations for dense vectors.
 
-        if not isinstance(vector , Sequence) :
-            raise TypeError(f"{name} must be a sequence of numbers.")
+    Supported operations:
 
-        if len(vector) == 0 :
-            raise ValueError(f"{name} must be non-empty.")
-
-        values : list[float] = []
-
-        for value in vector : 
-
-            if isinstance(value , bool) : 
-                raise TypeError(f"{name} must be a sequence of numbers.")
-
-            if not isinstance(value , (int , float)) : 
-                raise TypeError(f"{name} must be a sequence of numbers.")
-
-            values.append(float(value))
-
-        return values 
-
+    - dot product
+    - cosine similarity
+    - Euclidean distance
+    """
 
     @staticmethod
-    def _validate_same_dimention(vector1 : Sequence[Number] , vector2 : Sequence[Number]) -> None : 
+    def _validate_vector(
+        vector: Sequence[Number],
+        name: str = "vector",
+    ) -> list[float]:
+        """
+        Validate and normalize a vector.
+        """
 
-        if len(vector1) != len(vector2) : 
-            raise ValueError("Vectors must have the same dimension.")
+        if not isinstance(vector, Sequence):
+            raise TypeError(
+                f"{name} must be a sequence of numbers."
+            )
 
-    @classmethod 
-    def dot_product(cls , vector1 : Sequence[Number] , vector2 : Sequence[Number]) -> float : 
-        
-        a = cls._validate_vector(vector1 , name = "vector1")
-        b = cls._validate_vector(vector2 , name = "vector2")
+        if len(vector) == 0:
+            raise ValueError(
+                f"{name} must be non-empty."
+            )
 
-        cls._validate_same_dimention(a , b)
+        values: list[float] = []
 
-        return sum(a[i] * b[i] for i in range(len(a)))
+        for value in vector:
 
-    @classmethod 
-    def cosine_similarity(cls , vector1 : Sequence[Number] , vector2: Sequence[Number]) -> float :
+            if isinstance(value, bool):
+                raise TypeError(
+                    f"{name} must contain only numeric values."
+                )
 
-        a = cls._validate_vector(vector1 , name = "vector1")
-        b = cls._validate_vector(vector2 , name = "vector2")
+            if not isinstance(value, (int, float)):
+                raise TypeError(
+                    f"{name} must contain only numeric values."
+                )
 
-        cls._validate_same_dimention(a , b)
+            value = float(value)
 
-        magnitude_a = math.sqrt(sum(a[i] ** 2 for i in range(len(a))))
-        magnitude_b = math.sqrt(sum(b[i] ** 2 for i in range(len(b))))
+            if not math.isfinite(value):
+                raise ValueError(
+                    f"{name} must contain only finite values."
+                )
+
+            values.append(value)
+
+        return values
+
+    @staticmethod
+    def _validate_same_dimension(
+        vector1: Sequence[Number],
+        vector2: Sequence[Number],
+    ) -> None:
+        """
+        Ensure two vectors have identical dimensionality.
+        """
+
+        if len(vector1) != len(vector2):
+            raise ValueError(
+                "Vectors must have the same dimension."
+            )
+
+    @classmethod
+    def dot_product(
+        cls,
+        vector1: Sequence[Number],
+        vector2: Sequence[Number],
+    ) -> float:
+        """
+        Calculate the dot product of two vectors.
+        """
+
+        a = cls._validate_vector(
+            vector1,
+            name="vector1",
+        )
+
+        b = cls._validate_vector(
+            vector2,
+            name="vector2",
+        )
+
+        cls._validate_same_dimension(a, b)
+
+        return sum(
+            a[i] * b[i]
+            for i in range(len(a))
+        )
+
+    @classmethod
+    def cosine_similarity(
+        cls,
+        vector1: Sequence[Number],
+        vector2: Sequence[Number],
+    ) -> float:
+        """
+        Calculate cosine similarity between two vectors.
+
+        Returns a value in the range [-1, 1] for valid
+        non-zero vectors.
+        """
+
+        a = cls._validate_vector(
+            vector1,
+            name="vector1",
+        )
+
+        b = cls._validate_vector(
+            vector2,
+            name="vector2",
+        )
+
+        cls._validate_same_dimension(a, b)
+
+        dot = sum(
+            a[i] * b[i]
+            for i in range(len(a))
+        )
+
+        magnitude_a = math.sqrt(
+            sum(value * value for value in a)
+        )
+
+        magnitude_b = math.sqrt(
+            sum(value * value for value in b)
+        )
 
         if magnitude_a == 0.0:
             raise ValueError(
-                "Cannot calculate cosine similarity for a zero vector."
+                "Cannot calculate cosine similarity "
+                "for a zero vector."
             )
 
         if magnitude_b == 0.0:
             raise ValueError(
-                "Cannot calculate cosine similarity for a zero vector."
+                "Cannot calculate cosine similarity "
+                "for a zero vector."
             )
 
-        return cls.dot_product(vector1 , vector2) / (magnitude_a * magnitude_b)
+        return dot / (
+            magnitude_a * magnitude_b
+        )
 
-    @classmethod 
-    def euclidean_distance(cls , vector1 : Sequence[Number] , vector2 : Sequence[Number]) -> float :
+    @classmethod
+    def euclidean_distance(
+        cls,
+        vector1: Sequence[Number],
+        vector2: Sequence[Number],
+    ) -> float:
+        """
+        Calculate Euclidean distance between two vectors.
+        """
 
-        a = cls._validate_vector(vector1 , name = "vector1")
-        b = cls._validate_vector(vector2 , name = "vector2")
+        a = cls._validate_vector(
+            vector1,
+            name="vector1",
+        )
 
-        cls._validate_same_dimention(a , b)
+        b = cls._validate_vector(
+            vector2,
+            name="vector2",
+        )
 
-        return math.sqrt(sum((a[i] - b[i]) ** 2 for i in range(len(a))))
+        cls._validate_same_dimension(a, b)
+
+        return math.sqrt(
+            sum(
+                (a[i] - b[i]) ** 2
+                for i in range(len(a))
+            )
+        )
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}()"
-
-
-    
-    
