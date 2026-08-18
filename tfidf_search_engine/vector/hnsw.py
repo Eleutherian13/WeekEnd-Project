@@ -1,95 +1,58 @@
-# Start at an entry point
-#         ↓
-# Look at its neighbors
-#         ↓
-# Move toward a neighbor closer to query
-#         ↓
-# Repeat
-#         ↓
-# Reach promising region
-#         ↓
-# Explore several candidates
-#         ↓
-# Return Top-K
-
-
-# High HNSW layer
-#        ↓
-# Large jumps
-#        ↓
-# Lower layer
-#        ↓
-# More precise navigation
-#        ↓
-# Layer 0
-#        ↓
-# Local neighborhood
-#        ↓
-# Nearest vectors
-
-# data structure as : vector id ---> vector's connections --> connection at each layer 
-
-# node = {
-#     "id": "doc42",
-#     "levels": {
-#         0: {"doc1", "doc7", "doc19"},
-#         1: {"doc3", "doc8"},
-#         2: {"doc91"},
-#     }
-# }
-
-# doc1 → layer 0
-# doc2 → layer 0
-# doc3 → layers 0,1
-# doc4 → layer 0
-# doc5 → layers 0,1,2
-# doc6 → layer 0
-
-# Generate random level for X
-#         ↓
-# Find entry point
-#         ↓
-# Start at highest layer
-#         ↓
-# Greedily move toward X
-#         ↓
-# Drop down a layer
-#         ↓
-# Continue searching
-#         ↓
-# Reach layer 0
-#         ↓
-# Collect candidate neighbors
-#         ↓
-# Select appropriate neighbors
-#         ↓
-# Create bidirectional connections
-
 from __future__ import annotations
 
-import heapq
 import math
 import random
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
+
+from vector.similarity import VectorSimilarity
 
 
 Number = int | float
 Vector = Sequence[Number]
-VectorGetter = Callable[[str], Vector]
+
+
+@dataclass
+class HNSWNode:
+    """
+    Represents one node in the HNSW graph.
+
+    A node stores only graph information.
+
+    The actual vector remains owned by VectorStore.
+    """
+
+    id: str
+    level: int
+    neighbors: list[set[str]]
+
+    @classmethod
+    def create(
+        cls,
+        vector_id: str,
+        level: int,
+    ) -> HNSWNode:
+        return cls(
+            id=vector_id,
+            level=level,
+            neighbors=[set() for _ in range(level + 1)],
+        )
+
+    def neighbors_at(self, level: int) -> set[str]:
+        if level < 0 or level > self.level:
+            raise ValueError(
+                f"invalid level {level} for node {self.id!r}"
+            )
+
+        return self.neighbors[level]
 
 
 @dataclass(frozen=True)
 class HNSWSearchResult:
     """
-    Result returned by an HNSW approximate nearest-neighbor search.
+    Result returned by HNSW search.
+    """
 
-    Attributes:
-        id:
-            ID of the vector.
-        score:
-            Similarity score or distance, depending on the metric.
-        """
     id: str
     score: float
 
@@ -98,39 +61,25 @@ class HNSW:
     """
     Hierarchical Navigable Small World graph.
 
-    HNSW is an approximate nearest-neighbor (ANN) index over vectors.
+    HNSW is an approximate nearest-neighbor index.
 
-    Important architectural rule:
+    VectorStore remains the source of truth for:
 
-        HNSW does NOT own the vector data.
+        ID
+        vector
+        metadata
 
-    The caller remains responsible for storing vectors. HNSW only stores:
+    HNSW owns:
 
-        vector IDs
-        graph connectivity
-        hierarchy
+        graph
+        layers
         entry point
-
-    A vector_getter callback is used whenever HNSW needs the actual vector.
-
-    Supported metrics:
-
-        cosine
-        dot
-        euclidean
-
-    For cosine and dot:
-
-        higher score = more similar
-
-    For euclidean:
-
-        lower distance = more similar
+        ANN search parameters
     """
 
     def __init__(
         self,
-        vector_getter: VectorGetter,
+        vector_store,
         *,
         m: int = 16,
         ef_construction: int = 200,
@@ -139,177 +88,155 @@ class HNSW:
         seed: int | None = None,
     ) -> None:
 
-        if not callable(vector_getter):
-            raise TypeError("vector_getter must be callable")
+        self._validate_parameters(
+            m=m,
+            ef_construction=ef_construction,
+            ef_search=ef_search,
+            metric=metric,
+        )
 
-        if not isinstance(m, int) or isinstance(m, bool):
-            raise TypeError("m must be an integer")
-
-        if m < 2:
-            raise ValueError("m must be >= 2")
-
-        if not isinstance(ef_construction, int) or isinstance(
-            ef_construction, bool
-        ):
-            raise TypeError("ef_construction must be an integer")
-
-        if ef_construction < m:
-            raise ValueError("ef_construction must be >= m")
-
-        if not isinstance(ef_search, int) or isinstance(ef_search, bool):
-            raise TypeError("ef_search must be an integer")
-
-        if ef_search < 1:
-            raise ValueError("ef_search must be >= 1")
-
-        if metric not in {"cosine", "dot", "euclidean"}:
-            raise ValueError(
-                "metric must be one of: cosine, dot, euclidean"
-            )
-
-        self._vector_getter = vector_getter
+        self._vector_store = vector_store
 
         self.m = m
-        self.m_max = m
-        self.m_max_0 = 2 * m
-
         self.ef_construction = ef_construction
         self.ef_search = ef_search
         self.metric = metric
 
-        self._nodes: dict[str, list[set[str]]] = {}
+        self._nodes: dict[str, HNSWNode] = {}
 
         self._entry_point: str | None = None
         self._max_level = -1
 
         self._dimension: int | None = None
 
-        self._rng = random.Random(seed)
+        self._random = random.Random(seed)
 
-        # HNSW level generation:
+        # Probability distribution for node levels.
         #
-        #   P(level >= l) ~= exp(-l / mL)
+        # level = floor(
+        #     -log(U) / log(M)
+        # )
         #
-        # Standard HNSW implementations use:
-        #
-        #   mL = 1 / log(M)
-        #
-        # and:
-        #
-        #   level = floor(-log(U) * mL)
-        #
-        self._level_multiplier = 1.0 / math.log(self.m)
+        # This makes higher levels exponentially rarer.
+        self._level_multiplier = 1.0 / math.log(m)
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+    # ================================================================
+    # PUBLIC API
+    # ================================================================
 
-    def add(self, vector_id: str, vector: Vector | None = None) -> None:
+    def add(
+        self,
+        vector_id: str,
+        vector: Vector | None = None,
+    ) -> None:
         """
-        Add a vector ID to the HNSW graph.
+        Add a vector to the HNSW graph.
 
-        The vector itself remains owned by the external VectorStore.
+        `vector` is optional because VectorStore owns the vector.
 
-        `vector` is accepted for insertion-time validation. If omitted,
-        vector_getter(vector_id) is used.
-
-        Duplicate IDs are rejected.
+        It is accepted here so insertion can avoid an unnecessary second
+        lookup when the caller already has the vector.
         """
 
         self._validate_id(vector_id)
 
         if vector_id in self._nodes:
-            raise ValueError(f"vector ID already exists: {vector_id!r}")
+            raise ValueError(
+                f"vector ID already exists in HNSW: {vector_id!r}"
+            )
 
         if vector is None:
             vector = self._get_vector(vector_id)
 
         self._validate_vector(vector)
 
-        if self._dimension is None:
-            self._dimension = len(vector)
-        elif len(vector) != self._dimension:
-            raise ValueError(
-                f"vector dimension mismatch: expected "
-                f"{self._dimension}, got {len(vector)}"
-            )
+        self._check_dimension(vector)
 
         level = self._random_level()
 
-        # Every node has a neighbor set for every layer it participates in.
-        self._nodes[vector_id] = [
-            set() for _ in range(level + 1)
-        ]
+        node = HNSWNode.create(
+            vector_id=vector_id,
+            level=level,
+        )
 
-        # First node becomes the entry point.
+        self._nodes[vector_id] = node
+
+        # First node.
         if self._entry_point is None:
             self._entry_point = vector_id
             self._max_level = level
             return
 
-        entry_point = self._entry_point
+        current = self._entry_point
 
-        # --------------------------------------------------------------
-        # Phase 1:
+        # ------------------------------------------------------------
+        # PHASE 1
         #
-        # Starting from the current entry point, greedily descend through
-        # layers above the new node's highest layer.
-        # --------------------------------------------------------------
-
-        if level < self._max_level:
-            for layer in range(self._max_level, level, -1):
-                entry_point = self._search_layer_greedy(
-                    query=vector,
-                    entry_points=[entry_point],
-                    layer=layer,
-                )
-
-        # --------------------------------------------------------------
-        # Phase 2:
+        # Start at the highest layer and greedily move toward the
+        # new vector.
         #
-        # At every layer in which the new node exists:
+        # We only do this for layers above the new node's level.
+        # ------------------------------------------------------------
+
+        for level_index in range(
+            self._max_level,
+            level,
+            -1,
+        ):
+            current = self._greedy_search(
+                query=vector,
+                entry_point=current,
+                level=level_index,
+            )
+
+        # ------------------------------------------------------------
+        # PHASE 2
         #
-        #   1. perform a broader search
-        #   2. choose neighbors
-        #   3. connect the new node
-        #   4. connect those neighbors back to the new node
-        # --------------------------------------------------------------
+        # Insert the node into every layer it belongs to.
+        #
+        # At these layers we perform a wider search using
+        # ef_construction.
+        # ------------------------------------------------------------
 
-        upper_layer = min(level, self._max_level)
+        upper_level = min(
+            level,
+            self._max_level,
+        )
 
-        for layer in range(upper_layer, -1, -1):
-
+        for level_index in range(
+            upper_level,
+            -1,
+            -1,
+        ):
             candidates = self._search_layer(
                 query=vector,
-                entry_points=[entry_point],
+                entry_point=current,
                 ef=self.ef_construction,
-                layer=layer,
+                level=level_index,
             )
 
-            selected = self._select_neighbors(
+            neighbors = self._select_neighbors(
                 query=vector,
                 candidates=candidates,
-                max_neighbors=self._max_neighbors(layer),
+                max_neighbors=self._max_neighbors(level_index),
             )
 
-            self._connect_new_node(
+            self._connect(
                 vector_id=vector_id,
-                neighbors=selected,
-                layer=layer,
+                neighbors=neighbors,
+                level=level_index,
             )
 
-            # The best candidate from this layer becomes the entry point
-            # for the next lower layer.
             if candidates:
-                entry_point = self._closest_candidate(
+                current = self._nearest_id(
                     query=vector,
-                    candidates=candidates,
+                    ids=candidates,
                 )
 
-        # --------------------------------------------------------------
-        # If the new node is higher than the previous entry point,
-        # it becomes the new global entry point.
-        # --------------------------------------------------------------
+        # ------------------------------------------------------------
+        # If the new node reaches a higher layer than the current
+        # entry point, it becomes the new entry point.
+        # ------------------------------------------------------------
 
         if level > self._max_level:
             self._entry_point = vector_id
@@ -317,18 +244,17 @@ class HNSW:
 
     def add_batch(
         self,
-        items: Iterable[tuple[str, Vector]],
+        items: Sequence[tuple[str, Vector]],
     ) -> None:
         """
         Add multiple vectors.
-
-        Each item must be:
-
-            (vector_id, vector)
         """
 
         for vector_id, vector in items:
-            self.add(vector_id, vector)
+            self.add(
+                vector_id,
+                vector,
+            )
 
     def search(
         self,
@@ -338,11 +264,7 @@ class HNSW:
         ef_search: int | None = None,
     ) -> list[HNSWSearchResult]:
         """
-        Approximate nearest-neighbor search.
-
-        Returns up to `k` results.
-
-        `ef_search` may override the configured search breadth for one query.
+        Perform approximate nearest-neighbor search.
         """
 
         self._validate_vector(query)
@@ -353,143 +275,158 @@ class HNSW:
         if k < 1:
             raise ValueError("k must be >= 1")
 
-        if self._dimension is not None and len(query) != self._dimension:
-            raise ValueError(
-                f"query dimension mismatch: expected "
-                f"{self._dimension}, got {len(query)}"
-            )
-
-        if self._entry_point is None:
+        if not self._nodes:
             return []
+
+        self._check_dimension(query)
 
         if ef_search is None:
             ef_search = self.ef_search
 
-        if not isinstance(ef_search, int) or isinstance(ef_search, bool):
+        if not isinstance(ef_search, int) or isinstance(
+            ef_search,
+            bool,
+        ):
             raise TypeError("ef_search must be an integer")
 
         if ef_search < k:
             ef_search = k
 
-        # --------------------------------------------------------------
-        # Phase 1:
+        assert self._entry_point is not None
+
+        current = self._entry_point
+
+        # ------------------------------------------------------------
+        # UPPER LAYERS
         #
-        # Greedy descent through upper layers.
-        # --------------------------------------------------------------
+        # Greedy search.
+        # We only need one good entry point for the next layer.
+        # ------------------------------------------------------------
 
-        entry_point = self._entry_point
-
-        for layer in range(self._max_level, 0, -1):
-            entry_point = self._search_layer_greedy(
+        for level_index in range(
+            self._max_level,
+            0,
+            -1,
+        ):
+            current = self._greedy_search(
                 query=query,
-                entry_points=[entry_point],
-                layer=layer,
+                entry_point=current,
+                level=level_index,
             )
 
-        # --------------------------------------------------------------
-        # Phase 2:
+        # ------------------------------------------------------------
+        # LAYER 0
         #
-        # Wider exploration at layer 0.
-        # --------------------------------------------------------------
+        # Wider best-first search.
+        # ------------------------------------------------------------
 
         candidates = self._search_layer(
             query=query,
-            entry_points=[entry_point],
+            entry_point=current,
             ef=ef_search,
-            layer=0,
+            level=0,
         )
 
-        ranked = sorted(
-            candidates,
-            key=lambda node_id: self._ranking_key(
-                self._score(query, self._get_vector(node_id))
-            ),
-        )
-
-        results = [
-            HNSWSearchResult(
-                id=node_id,
-                score=self._score(query, self._get_vector(node_id)),
+        candidates.sort(
+            key=lambda vector_id: self._ranking_key(
+                self._score(
+                    query,
+                    self._get_vector(vector_id),
+                )
             )
-            for node_id in ranked[:k]
-        ]
+        )
+
+        results: list[HNSWSearchResult] = []
+
+        for vector_id in candidates[:k]:
+
+            score = self._score(
+                query,
+                self._get_vector(vector_id),
+            )
+
+            results.append(
+                HNSWSearchResult(
+                    id=vector_id,
+                    score=score,
+                )
+            )
 
         return results
 
-    def remove(self, vector_id: str) -> None:
+    def remove(
+        self,
+        vector_id: str,
+    ) -> None:
         """
         Remove a node from the graph.
 
-        HNSW deletion is implemented by removing the node from every
-        neighbor's adjacency set.
+        This removes all incoming and outgoing edges.
 
-        This implementation does not attempt graph repair/reinsertion.
+        Graph repair is intentionally not performed yet.
         """
 
         self._validate_id(vector_id)
 
         if vector_id not in self._nodes:
-            raise KeyError(f"unknown vector ID: {vector_id!r}")
+            raise KeyError(
+                f"vector ID not found: {vector_id!r}"
+            )
 
-        levels = self._nodes[vector_id]
+        node = self._nodes[vector_id]
 
-        for layer, neighbors in enumerate(levels):
+        # Remove the node from every neighbor's adjacency list.
+        for level in range(node.level + 1):
 
-            for neighbor_id in list(neighbors):
+            for neighbor_id in list(
+                node.neighbors[level]
+            ):
+                neighbor = self._nodes.get(neighbor_id)
 
-                if neighbor_id in self._nodes:
-                    self._nodes[neighbor_id][layer].discard(vector_id)
+                if neighbor is not None:
+                    neighbor.neighbors[level].discard(
+                        vector_id
+                    )
 
         del self._nodes[vector_id]
 
-        # Empty graph.
+        # Graph became empty.
         if not self._nodes:
             self._entry_point = None
             self._max_level = -1
             self._dimension = None
             return
 
-        # If the entry point was deleted, choose the highest-level
-        # remaining node.
+        # Rebuild the entry point if necessary.
         if vector_id == self._entry_point:
+            self._recalculate_entry_point()
 
-            new_entry_point = max(
-                self._nodes,
-                key=lambda node_id: len(self._nodes[node_id]),
-            )
-
-            self._entry_point = new_entry_point
-            self._max_level = len(
-                self._nodes[new_entry_point]
-            ) - 1
-
-    def contains(self, vector_id: str) -> bool:
-        """Return whether a vector ID exists in the graph."""
-
-        self._validate_id(vector_id)
+    def contains(
+        self,
+        vector_id: str,
+    ) -> bool:
         return vector_id in self._nodes
 
     def clear(self) -> None:
-        """Remove every node from the graph."""
-
         self._nodes.clear()
+
         self._entry_point = None
         self._max_level = -1
         self._dimension = None
 
     def __len__(self) -> int:
-        """Return the number of indexed vectors."""
-
         return len(self._nodes)
 
-    def __contains__(self, vector_id: str) -> bool:
+    def __contains__(
+        self,
+        vector_id: str,
+    ) -> bool:
         return vector_id in self._nodes
 
     def __repr__(self) -> str:
         return (
             f"HNSW("
             f"size={len(self)}, "
-            f"dimension={self._dimension}, "
             f"metric={self.metric!r}, "
             f"m={self.m}, "
             f"ef_construction={self.ef_construction}, "
@@ -498,223 +435,78 @@ class HNSW:
             f")"
         )
 
-    # ------------------------------------------------------------------
-    # Graph construction
-    # ------------------------------------------------------------------
+    # ================================================================
+    # LEVEL GENERATION
+    # ================================================================
 
     def _random_level(self) -> int:
         """
-        Generate the maximum layer for a new node.
+        Randomly determine how many layers a node participates in.
 
-        Higher levels become exponentially rarer.
+        Mathematical idea:
+
+            L = floor(
+                -log(U) / log(M)
+            )
+
+        where:
+
+            U ~ Uniform(0, 1)
+
+        Higher levels therefore become exponentially rarer.
         """
 
-        random_value = self._rng.random()
+        u = self._random.random()
 
-        # random() can theoretically return 0.
-        while random_value <= 0.0:
-            random_value = self._rng.random()
+        while u <= 0.0:
+            u = self._random.random()
 
         return int(
-            -math.log(random_value) * self._level_multiplier
+            -math.log(u) * self._level_multiplier
         )
 
-    def _connect_new_node(
-        self,
-        vector_id: str,
-        neighbors: Sequence[str],
-        layer: int,
-    ) -> None:
-        """
-        Create bidirectional edges between the new node and its neighbors.
-        """
+    # ================================================================
+    # GREEDY SEARCH
+    # ================================================================
 
-        node_neighbors = self._nodes[vector_id][layer]
-
-        for neighbor_id in neighbors:
-
-            if neighbor_id == vector_id:
-                continue
-
-            node_neighbors.add(neighbor_id)
-
-            neighbor_neighbors = self._nodes[neighbor_id][layer]
-            neighbor_neighbors.add(vector_id)
-
-            max_neighbors = self._max_neighbors(layer)
-
-            if len(neighbor_neighbors) > max_neighbors:
-
-                neighbor_vector = self._get_vector(neighbor_id)
-
-                candidates = [
-                    (
-                        candidate_id,
-                        self._score(
-                            neighbor_vector,
-                            self._get_vector(candidate_id),
-                        ),
-                    )
-                    for candidate_id in neighbor_neighbors
-                    if candidate_id != neighbor_id
-                ]
-
-                selected = self._select_neighbors(
-                    query=neighbor_vector,
-                    candidates=candidates,
-                    max_neighbors=max_neighbors,
-                )
-
-                neighbor_neighbors.clear()
-                neighbor_neighbors.update(selected)
-
-    def _select_neighbors(
+    def _greedy_search(
         self,
         query: Vector,
-        candidates: Iterable[str | tuple[str, float]],
-        max_neighbors: int,
-    ) -> list[str]:
-        """
-        Select neighbors for a node.
-
-        This uses a diversity-aware heuristic rather than simply selecting
-        the globally closest M nodes.
-
-        Candidate A is accepted if it is sufficiently useful relative to
-        already-selected neighbors.
-
-        This is an educational implementation of the HNSW neighbor
-        selection idea rather than a byte-for-byte reproduction of a
-        particular production library.
-        """
-
-        normalized: list[tuple[str, float]] = []
-
-        for candidate in candidates:
-
-            if isinstance(candidate, tuple):
-                candidate_id, score = candidate
-            else:
-                candidate_id = candidate
-                score = self._score(
-                    query,
-                    self._get_vector(candidate_id),
-                )
-
-            normalized.append((candidate_id, score))
-
-        if not normalized:
-            return []
-
-        normalized.sort(
-            key=lambda item: self._ranking_key(item[1])
-        )
-
-        selected: list[str] = []
-
-        for candidate_id, candidate_score in normalized:
-
-            if candidate_id not in self._nodes:
-                continue
-
-            if len(selected) >= max_neighbors:
-                break
-
-            accept = True
-
-            for selected_id in selected:
-
-                selected_score = self._score(
-                    self._get_vector(candidate_id),
-                    self._get_vector(selected_id),
-                )
-
-                # For similarity metrics, a candidate that is very similar
-                # to an already-selected neighbor may provide little graph
-                # diversity.
-                #
-                # For distance metrics, the same idea is expressed with
-                # smaller distances.
-                if self._candidate_is_redundant(
-                    candidate_score=candidate_score,
-                    candidate_to_selected=selected_score,
-                ):
-                    accept = False
-                    break
-
-            if accept:
-                selected.append(candidate_id)
-
-        # If the diversity heuristic was too aggressive, fill remaining
-        # capacity with closest candidates.
-        if len(selected) < max_neighbors:
-
-            selected_set = set(selected)
-
-            for candidate_id, _ in normalized:
-
-                if candidate_id in selected_set:
-                    continue
-
-                selected.append(candidate_id)
-
-                if len(selected) >= max_neighbors:
-                    break
-
-        return selected[:max_neighbors]
-
-    def _candidate_is_redundant(
-        self,
-        *,
-        candidate_score: float,
-        candidate_to_selected: float,
-    ) -> bool:
-        """
-        Determine whether a candidate is redundant.
-
-        Similarity:
-            candidate-to-selected > candidate-to-query
-
-        Distance:
-            candidate-to-selected < candidate-to-query
-        """
-
-        if self.metric in {"cosine", "dot"}:
-            return candidate_to_selected > candidate_score
-
-        return candidate_to_selected < candidate_score
-
-    # ------------------------------------------------------------------
-    # Search
-    # ------------------------------------------------------------------
-
-    def _search_layer_greedy(
-        self,
-        query: Vector,
-        entry_points: Sequence[str],
-        layer: int,
+        entry_point: str,
+        level: int,
     ) -> str:
         """
-        Greedy search used for upper HNSW layers.
+        Greedily move toward the query at one layer.
 
-        At these layers we primarily want to find a good starting point
-        for the next layer.
+        Algorithm:
+
+            current = entry_point
+
+            while a neighbor is better:
+                move to that neighbor
+
+            return current
+
+        This is primarily used on upper layers.
         """
 
-        current = entry_points[0]
+        current = entry_point
 
         current_score = self._score(
             query,
             self._get_vector(current),
         )
 
-        improved = True
+        while True:
 
-        while improved:
+            best = current
+            best_score = current_score
 
-            improved = False
+            neighbors = self._nodes[
+                current
+            ].neighbors_at(level)
 
-            for neighbor_id in self._nodes[current][layer]:
+            for neighbor_id in neighbors:
 
                 neighbor_score = self._score(
                     query,
@@ -723,115 +515,96 @@ class HNSW:
 
                 if self._is_better(
                     neighbor_score,
-                    current_score,
+                    best_score,
                 ):
-                    current = neighbor_id
-                    current_score = neighbor_score
-                    improved = True
-                    break
+                    best = neighbor_id
+                    best_score = neighbor_score
+
+            if best == current:
+                break
+
+            current = best
+            current_score = best_score
 
         return current
+
+    # ================================================================
+    # BEST-FIRST SEARCH
+    # ================================================================
 
     def _search_layer(
         self,
         query: Vector,
-        entry_points: Sequence[str],
+        entry_point: str,
         ef: int,
-        layer: int,
+        level: int,
     ) -> list[str]:
         """
-        Best-first graph search.
+        Search one layer using a candidate frontier.
 
-        Maintains two structures:
+        This is the important part of HNSW search.
 
-            candidates:
+        Unlike greedy search, we don't immediately throw away every
+        alternative path.
+
+        We maintain:
+
+            candidates
                 nodes still worth exploring
 
-            results:
+            results
                 best nodes discovered so far
-
-        This is the key search mechanism that makes HNSW more robust than
-        pure greedy descent.
         """
 
-        if not entry_points:
-            return []
+        visited: set[str] = {
+            entry_point
+        }
 
-        visited: set[str] = set()
+        candidates: list[str] = [
+            entry_point
+        ]
 
-        # Python's heapq is a min-heap.
-        #
-        # Candidate heap:
-        #
-        #   (distance-like key, node_id)
-        #
-        # We transform similarity scores into a value where smaller is
-        # better for heap operations.
-        candidates: list[tuple[float, str]] = []
-
-        # Results heap:
-        #
-        # Keep the WORST result at the top so it can be removed efficiently.
-        results: list[tuple[float, str]] = []
-
-        for entry_point in entry_points:
-
-            if entry_point not in self._nodes:
-                continue
-
-            if layer >= len(self._nodes[entry_point]):
-                continue
-
-            score = self._score(
-                query,
-                self._get_vector(entry_point),
-            )
-
-            heap_key = self._heap_key(score)
-
-            heapq.heappush(
-                candidates,
-                (heap_key, entry_point),
-            )
-
-            # For results we need a key where the worst item is easiest
-            # to identify.
-            result_key = self._worst_heap_key(score)
-
-            heapq.heappush(
-                results,
-                (result_key, entry_point),
-            )
-
-            visited.add(entry_point)
+        results: set[str] = {
+            entry_point
+        }
 
         while candidates:
 
-            candidate_heap_key, current_id = heapq.heappop(
-                candidates
+            current = self._pop_best_candidate(
+                query=query,
+                candidates=candidates,
             )
 
             current_score = self._score(
                 query,
-                self._get_vector(current_id),
+                self._get_vector(current),
             )
 
             if len(results) >= ef:
 
-                worst_id = results[0][1]
+                worst_id = self._worst_id(
+                    query=query,
+                    ids=results,
+                )
 
                 worst_score = self._score(
                     query,
                     self._get_vector(worst_id),
                 )
 
+                # If current isn't better than the worst result,
+                # no useful expansion is possible through this branch.
                 if not self._is_better(
                     current_score,
                     worst_score,
                 ):
                     break
 
-            for neighbor_id in self._nodes[current_id][layer]:
+            neighbors = self._nodes[
+                current
+            ].neighbors_at(level)
+
+            for neighbor_id in neighbors:
 
                 if neighbor_id in visited:
                     continue
@@ -845,56 +618,280 @@ class HNSW:
 
                 if len(results) < ef:
 
-                    heapq.heappush(
-                        candidates,
-                        (
-                            self._heap_key(neighbor_score),
-                            neighbor_id,
-                        ),
-                    )
+                    results.add(neighbor_id)
+                    candidates.append(neighbor_id)
 
-                    heapq.heappush(
-                        results,
-                        (
-                            self._worst_heap_key(neighbor_score),
-                            neighbor_id,
-                        ),
-                    )
+                    continue
 
-                else:
+                worst_id = self._worst_id(
+                    query=query,
+                    ids=results,
+                )
 
-                    worst_id = results[0][1]
+                worst_score = self._score(
+                    query,
+                    self._get_vector(worst_id),
+                )
 
-                    worst_score = self._score(
-                        query,
-                        self._get_vector(worst_id),
-                    )
+                if self._is_better(
+                    neighbor_score,
+                    worst_score,
+                ):
+                    results.remove(worst_id)
+                    results.add(neighbor_id)
+                    candidates.append(neighbor_id)
 
-                    if self._is_better(
-                        neighbor_score,
-                        worst_score,
-                    ):
-                        heapq.heappush(
-                            candidates,
-                            (
-                                self._heap_key(neighbor_score),
-                                neighbor_id,
-                            ),
-                        )
+        return list(results)
 
-                        heapq.heapreplace(
-                            results,
-                            (
-                                self._worst_heap_key(neighbor_score),
-                                neighbor_id,
-                            ),
-                        )
+    # ================================================================
+    # NEIGHBOR SELECTION
+    # ================================================================
 
-        return [node_id for _, node_id in results]
+    def _select_neighbors(
+        self,
+        query: Vector,
+        candidates: Sequence[str],
+        max_neighbors: int,
+    ) -> list[str]:
+        """
+        Select up to M neighbors for a node.
 
-    # ------------------------------------------------------------------
-    # Metric operations
-    # ------------------------------------------------------------------
+        First choose candidates by relevance.
+
+        Then apply a diversity heuristic.
+
+        The goal is not merely:
+
+            "pick the M closest nodes"
+
+        but:
+
+            "pick useful and sufficiently diverse neighbors"
+        """
+
+        if not candidates:
+            return []
+
+        ordered = sorted(
+            set(candidates),
+            key=lambda vector_id: self._ranking_key(
+                self._score(
+                    query,
+                    self._get_vector(vector_id),
+                )
+            ),
+        )
+
+        selected: list[str] = []
+
+        for candidate_id in ordered:
+
+            if len(selected) >= max_neighbors:
+                break
+
+            candidate_vector = self._get_vector(
+                candidate_id
+            )
+
+            accept = True
+
+            candidate_to_query = self._score(
+                query,
+                candidate_vector,
+            )
+
+            for selected_id in selected:
+
+                selected_vector = self._get_vector(
+                    selected_id
+                )
+
+                candidate_to_selected = self._score(
+                    candidate_vector,
+                    selected_vector,
+                )
+
+                # Diversity heuristic.
+                #
+                # If candidate is closer/more similar to an already
+                # selected neighbor than it is to the query, the edge
+                # may be redundant.
+                if self._is_redundant(
+                    candidate_to_query,
+                    candidate_to_selected,
+                ):
+                    accept = False
+                    break
+
+            if accept:
+                selected.append(candidate_id)
+
+        # The heuristic should never prevent us from filling the
+        # available degree unnecessarily.
+        if len(selected) < max_neighbors:
+
+            selected_set = set(selected)
+
+            for candidate_id in ordered:
+
+                if candidate_id in selected_set:
+                    continue
+
+                selected.append(candidate_id)
+
+                if len(selected) >= max_neighbors:
+                    break
+
+        return selected[:max_neighbors]
+
+    def _is_redundant(
+        self,
+        candidate_to_query: float,
+        candidate_to_selected: float,
+    ) -> bool:
+
+        if self.metric in {"cosine", "dot"}:
+            return candidate_to_selected > candidate_to_query
+
+        return candidate_to_selected < candidate_to_query
+
+    # ================================================================
+    # GRAPH CONNECTION
+    # ================================================================
+
+    def _connect(
+        self,
+        vector_id: str,
+        neighbors: Sequence[str],
+        level: int,
+    ) -> None:
+        """
+        Connect the new node bidirectionally.
+        """
+
+        node = self._nodes[vector_id]
+
+        for neighbor_id in neighbors:
+
+            if neighbor_id == vector_id:
+                continue
+
+            node.neighbors[level].add(
+                neighbor_id
+            )
+
+            neighbor = self._nodes[neighbor_id]
+
+            neighbor.neighbors[level].add(
+                vector_id
+            )
+
+            max_neighbors = self._max_neighbors(
+                level
+            )
+
+            # The neighbor may now have too many edges.
+            if len(
+                neighbor.neighbors[level]
+            ) > max_neighbors:
+
+                selected = self._select_neighbors(
+                    query=self._get_vector(
+                        neighbor_id
+                    ),
+                    candidates=list(
+                        neighbor.neighbors[level]
+                    ),
+                    max_neighbors=max_neighbors,
+                )
+
+                neighbor.neighbors[level] = set(
+                    selected
+                )
+
+    # ================================================================
+    # GRAPH UTILITIES
+    # ================================================================
+
+    def _max_neighbors(
+        self,
+        level: int,
+    ) -> int:
+        """
+        Layer 0 gets more connections.
+
+        Upper layers:
+            M
+
+        Layer 0:
+            2M
+        """
+
+        if level == 0:
+            return 2 * self.m
+
+        return self.m
+
+    def _pop_best_candidate(
+        self,
+        query: Vector,
+        candidates: list[str],
+    ) -> str:
+        """
+        Remove and return the currently best candidate.
+        """
+
+        best_index = min(
+            range(len(candidates)),
+            key=lambda index: self._ranking_key(
+                self._score(
+                    query,
+                    self._get_vector(
+                        candidates[index]
+                    ),
+                )
+            ),
+        )
+
+        return candidates.pop(best_index)
+
+    def _worst_id(
+        self,
+        query: Vector,
+        ids: Sequence[str] | set[str],
+    ) -> str:
+        """
+        Return the least useful result.
+        """
+
+        return max(
+            ids,
+            key=lambda vector_id: self._ranking_key(
+                self._score(
+                    query,
+                    self._get_vector(vector_id),
+                )
+            ),
+        )
+
+    def _nearest_id(
+        self,
+        query: Vector,
+        ids: Sequence[str],
+    ) -> str:
+        return min(
+            ids,
+            key=lambda vector_id: self._ranking_key(
+                self._score(
+                    query,
+                    self._get_vector(vector_id),
+                )
+            ),
+        )
+
+    # ================================================================
+    # SIMILARITY
+    # ================================================================
 
     def _score(
         self,
@@ -902,71 +899,24 @@ class HNSW:
         vector_b: Vector,
     ) -> float:
         """
-        Calculate the configured metric.
-
-        The sign/order is preserved:
-
-            cosine -> larger is better
-            dot    -> larger is better
-            euclidean -> smaller is better
+        Delegate similarity mathematics to VectorSimilarity.
         """
 
-        self._validate_vector(vector_a)
-        self._validate_vector(vector_b)
-
-        if len(vector_a) != len(vector_b):
-            raise ValueError(
-                "vectors must have the same dimension"
+        if self.metric == "cosine":
+            return VectorSimilarity.cosine_similarity(
+                vector_a,
+                vector_b,
             )
 
         if self.metric == "dot":
-
-            return float(
-                sum(
-                    float(a) * float(b)
-                    for a, b in zip(
-                        vector_a,
-                        vector_b,
-                        strict=True,
-                    )
-                )
+            return VectorSimilarity.dot_product(
+                vector_a,
+                vector_b,
             )
 
-        if self.metric == "cosine":
-
-            dot = sum(
-                float(a) * float(b)
-                for a, b in zip(
-                    vector_a,
-                    vector_b,
-                    strict=True,
-                )
-            )
-
-            norm_a = math.sqrt(
-                sum(float(a) ** 2 for a in vector_a)
-            )
-
-            norm_b = math.sqrt(
-                sum(float(b) ** 2 for b in vector_b)
-            )
-
-            if norm_a == 0.0 or norm_b == 0.0:
-                raise ValueError(
-                    "cosine similarity is undefined for zero vectors"
-                )
-
-            return dot / (norm_a * norm_b)
-
-        return math.sqrt(
-            sum(
-                (float(a) - float(b)) ** 2
-                for a, b in zip(
-                    vector_a,
-                    vector_b,
-                    strict=True,
-                )
-            )
+        return VectorSimilarity.euclidean_distance(
+            vector_a,
+            vector_b,
         )
 
     def _is_better(
@@ -974,14 +924,20 @@ class HNSW:
         score_a: float,
         score_b: float,
     ) -> bool:
+
         if self.metric in {"cosine", "dot"}:
             return score_a > score_b
 
         return score_a < score_b
 
-    def _ranking_key(self, score: float) -> float:
+    def _ranking_key(
+        self,
+        score: float,
+    ) -> float:
         """
-        Smaller values are better for sorting.
+        Convert all metrics to:
+
+            smaller = better
         """
 
         if self.metric in {"cosine", "dot"}:
@@ -989,121 +945,181 @@ class HNSW:
 
         return score
 
-    def _heap_key(self, score: float) -> float:
-        """
-        Candidate heap key.
+    # ================================================================
+    # VECTORSTORE ACCESS
+    # ================================================================
 
-        Smaller = better.
-        """
-
-        return self._ranking_key(score)
-
-    def _worst_heap_key(self, score: float) -> float:
-        """
-        Results heap key.
-
-        Larger = better because heap root should represent the worst
-        result.
-
-        Therefore:
-
-            similarity:
-                score itself
-
-            distance:
-                -distance
-        """
-
-        if self.metric in {"cosine", "dot"}:
-            return score
-
-        return -score
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    def _closest_candidate(
+    def _get_vector(
         self,
-        query: Vector,
-        candidates: Iterable[str],
-    ) -> str:
-        return min(
-            candidates,
-            key=lambda node_id: self._ranking_key(
-                self._score(
-                    query,
-                    self._get_vector(node_id),
-                )
-            ),
+        vector_id: str,
+    ) -> Vector:
+        return self._vector_store.get_vector(
+            vector_id
         )
 
-    def _max_neighbors(self, layer: int) -> int:
+    # ================================================================
+    # ENTRY POINT
+    # ================================================================
+
+    def _recalculate_entry_point(self) -> None:
         """
-        Layer 0 normally has a larger maximum degree.
-
-            upper layers -> M
-            layer 0      -> 2M
+        Choose a remaining node with the highest level.
         """
 
-        if layer == 0:
-            return self.m_max_0
+        self._entry_point = max(
+            self._nodes,
+            key=lambda vector_id: self._nodes[
+                vector_id
+            ].level,
+        )
 
-        return self.m_max
+        self._max_level = self._nodes[
+            self._entry_point
+        ].level
 
-    def _get_vector(self, vector_id: str) -> Vector:
-        vector = self._vector_getter(vector_id)
+    # ================================================================
+    # VALIDATION
+    # ================================================================
 
-        self._validate_vector(vector)
+    @staticmethod
+    def _validate_parameters(
+        *,
+        m: int,
+        ef_construction: int,
+        ef_search: int,
+        metric: str,
+    ) -> None:
 
-        if self._dimension is not None and len(vector) != self._dimension:
-            raise ValueError(
-                f"vector dimension mismatch for {vector_id!r}: "
-                f"expected {self._dimension}, got {len(vector)}"
+        if not isinstance(m, int) or isinstance(m, bool):
+            raise TypeError("m must be an integer")
+
+        if m < 2:
+            raise ValueError("m must be >= 2")
+
+        if not isinstance(
+            ef_construction,
+            int,
+        ) or isinstance(
+            ef_construction,
+            bool,
+        ):
+            raise TypeError(
+                "ef_construction must be an integer"
             )
 
-        return vector
+        if ef_construction < m:
+            raise ValueError(
+                "ef_construction must be >= m"
+            )
+
+        if not isinstance(
+            ef_search,
+            int,
+        ) or isinstance(
+            ef_search,
+            bool,
+        ):
+            raise TypeError(
+                "ef_search must be an integer"
+            )
+
+        if ef_search < 1:
+            raise ValueError(
+                "ef_search must be >= 1"
+            )
+
+        if metric not in {
+            "cosine",
+            "dot",
+            "euclidean",
+        }:
+            raise ValueError(
+                "metric must be one of: "
+                "cosine, dot, euclidean"
+            )
 
     @staticmethod
-    def _validate_id(vector_id: str) -> None:
-        if not isinstance(vector_id, str):
-            raise TypeError("vector_id must be a string")
+    def _validate_id(
+        vector_id: str,
+    ) -> None:
+
+        if not isinstance(
+            vector_id,
+            str,
+        ):
+            raise TypeError(
+                "vector_id must be a string"
+            )
 
         if not vector_id:
-            raise ValueError("vector_id must not be empty")
+            raise ValueError(
+                "vector_id must not be empty"
+            )
 
     @staticmethod
-    def _validate_vector(vector: Vector) -> None:
-        if isinstance(vector, (str, bytes)):
-            raise TypeError("vector must be a numeric sequence")
+    def _validate_vector(
+        vector: Vector,
+    ) -> None:
+
+        if isinstance(
+            vector,
+            (str, bytes),
+        ):
+            raise TypeError(
+                "vector must be a numeric sequence"
+            )
 
         try:
             values = list(vector)
         except TypeError as exc:
             raise TypeError(
-                "vector must be an iterable of numbers"
+                "vector must be an iterable"
             ) from exc
 
         if not values:
-            raise ValueError("vector must not be empty")
+            raise ValueError(
+                "vector must not be empty"
+            )
 
         for value in values:
 
             if isinstance(value, bool):
                 raise TypeError(
-                    "vector values must be numeric; bool is not allowed"
+                    "vector values cannot be bool"
                 )
 
-            if not isinstance(value, (int, float)):
+            if not isinstance(
+                value,
+                (int, float),
+            ):
                 raise TypeError(
-                    "vector values must be int or float"
+                    "vector values must be numeric"
                 )
 
-            if not math.isfinite(float(value)):
+            if not math.isfinite(
+                float(value)
+            ):
                 raise ValueError(
                     "vector values must be finite"
                 )
 
+    def _check_dimension(
+        self,
+        vector: Vector,
+    ) -> None:
 
+        dimension = len(vector)
 
+        if self._dimension is None:
+            self._dimension = dimension
+            return
+
+        if dimension != self._dimension:
+            raise ValueError(
+                f"vector dimension mismatch: "
+                f"expected {self._dimension}, "
+                f"got {dimension}"
+            )
+
+    
 
