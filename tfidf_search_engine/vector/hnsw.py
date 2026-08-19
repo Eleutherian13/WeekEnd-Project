@@ -1120,6 +1120,3 @@ class HNSW:
                 f"expected {self._dimension}, "
                 f"got {dimension}"
             )
-
-    
-
