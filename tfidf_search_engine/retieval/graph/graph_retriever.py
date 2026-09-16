@@ -189,6 +189,9 @@ class SimpleGraphRetriever(GraphRetriever):
         node: Node,
         query_tokens: set[str],
     ) -> bool:
+        if not query_tokens:
+            return False
+
         searchable_values = [node.node_id, node.node_type]
         searchable_values.extend(cls._metadata_values(node.metadata))
 
@@ -196,7 +199,7 @@ class SimpleGraphRetriever(GraphRetriever):
         for value in searchable_values:
             node_tokens.update(cls._tokens(value))
 
-        return query_tokens.issubset(node_tokens)
+        return bool(query_tokens & node_tokens)
 
     @classmethod
     def _metadata_values(cls, metadata: object) -> list[str]:

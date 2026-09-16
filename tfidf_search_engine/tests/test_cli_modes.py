@@ -64,7 +64,7 @@ class TestCliModes(unittest.TestCase):
 
         rendered = output.getvalue()
         self.assertIn("1. Lexical BM25 - AVAILABLE", rendered)
-        self.assertIn("3. Graph Retrieval - NOT CONFIGURED", rendered)
+        self.assertIn("3. Graph Retrieval - AVAILABLE", rendered)
         self.assertIn("4. Hybrid Retrieval - AVAILABLE", rendered)
 
     def test_lexical_mode_displays_ranked_documents(self):
@@ -79,21 +79,21 @@ class TestCliModes(unittest.TestCase):
 
         rendered = output.getvalue()
         self.assertIn("Document ID:", rendered)
-        self.assertIn("Machine learning is amazing", rendered)
+        self.assertIn("Suppose a graph contains Machine Learning", rendered)
         self.assertIn("Score:", rendered)
 
-    def test_graph_mode_reports_unconfigured(self):
+    def test_graph_mode_reports_available(self):
         runtime = app.Runtime(
             corpus=app.load_corpus(),
             engine=app.create_search_engine(app.load_corpus()),
         )
         output = io.StringIO()
 
-        with redirect_stdout(output):
+        with patch("builtins.input", side_effect=["machine", "1"]), redirect_stdout(output):
             app._run_mode(runtime, "3")
 
-        self.assertIn("NOT CONFIGURED", output.getvalue())
-        self.assertIn("no graph data source", output.getvalue())
+        self.assertIn("Document ID:", output.getvalue())
+        self.assertIn("Score:", output.getvalue())
 
     def test_dense_mode_displays_results(self):
         output = io.StringIO()

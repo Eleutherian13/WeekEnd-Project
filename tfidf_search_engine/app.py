@@ -7,6 +7,10 @@ from typing import Any
 from analysis.analyzer import Analyzer
 from document.corpus import Corpus
 from document.documents import Document
+from graph.edge import Edge
+from graph.graph import Graph
+from graph.node import Node
+from graph.store import GraphStore
 from index.builder import IndexBuilder
 from index.inverted_index import InvertedIndex
 from index.vocabulary import Vocabulary
@@ -15,6 +19,7 @@ from rag import OllamaGenerator
 from ranking.bm25 import BM25
 from retieval.candidate_generator import CandidateGenerator
 from retieval.dense.retriever import DenseRetriever
+from retieval.graph.graph_retriever import SimpleGraphRetriever
 from retieval.lexical.bm25_retriever import BM25Retriever
 from reranking import Reranker, SentenceTransformerCrossEncoder
 from search.search_engine import (
@@ -33,6 +38,7 @@ class Runtime:
     corpus: Corpus
     engine: SearchEngine
     dense_error: str | None = None
+    graph_error: str | None = None
     reranker_error: str | None = None
     generator_error: str | None = None
 
@@ -41,12 +47,205 @@ class Runtime:
         return self.engine.dense_retriever is not None
 
     @property
+    def graph_available(self) -> bool:
+        return self.engine.graph_retriever is not None
+
+    @property
     def reranker_available(self) -> bool:
         return self.engine.reranker is not None
 
     @property
     def generator_available(self) -> bool:
         return self.engine.generator is not None
+
+
+def _normalize_graph_value(value: Any) -> str:
+    if value is None:
+        return ""
+
+    if isinstance(value, str):
+        return value.strip()
+
+    if isinstance(value, (int, float)):
+        return str(value)
+
+    return str(value).strip()
+
+
+def build_graph_from_corpus(corpus: Corpus) -> Graph:
+    """Construct a graph from the document metadata held in the corpus."""
+
+    graph = Graph()
+    graph_store = GraphStore(graph)
+    entity_metadata: dict[str, dict[str, Any]] = {}
+    seen_edges: set[tuple[str, str, str, int]] = set()
+
+    for document in corpus:
+        document_id = document.document_id
+        document_node_id = str(document_id)
+        document_node = Node(
+            document_node_id,
+            "document",
+            {
+                "document_id": document_id,
+                "text": document.text,
+                "topic": document.metadata.get("topic"),
+                "source": "documents.json",
+            },
+        )
+        if not graph.has_node(document_node_id):
+            graph.add_node(document_node)
+
+        metadata = document.metadata or {}
+        entity_names: list[str] = []
+        raw_entities = metadata.get("entities", [])
+        if isinstance(raw_entities, list):
+            for raw_entity in raw_entities:
+                entity_name = _normalize_graph_value(raw_entity)
+                if entity_name:
+                    entity_names.append(entity_name)
+
+        for entity_name in entity_names:
+            record = entity_metadata.setdefault(
+                entity_name,
+                {
+                    "name": entity_name,
+                    "document_ids": [],
+                    "related_entities": [],
+                    "relations": [],
+                    "source_documents": [],
+                },
+            )
+            if document_id not in record["document_ids"]:
+                record["document_ids"].append(document_id)
+            if document_id not in record["source_documents"]:
+                record["source_documents"].append(document_id)
+
+        for relation in metadata.get("relations", []):
+            if not isinstance(relation, dict):
+                continue
+
+            relation_name = _normalize_graph_value(relation.get("relation"))
+            source_name = _normalize_graph_value(relation.get("source"))
+            target_name = _normalize_graph_value(relation.get("target"))
+
+            if not relation_name or not target_name:
+                continue
+
+            if not source_name:
+                source_name = entity_names[0] if entity_names else ""
+
+            if not source_name or not target_name:
+                continue
+
+            source_record = entity_metadata.setdefault(
+                source_name,
+                {
+                    "name": source_name,
+                    "document_ids": [],
+                    "related_entities": [],
+                    "relations": [],
+                    "source_documents": [],
+                },
+            )
+            target_record = entity_metadata.setdefault(
+                target_name,
+                {
+                    "name": target_name,
+                    "document_ids": [],
+                    "related_entities": [],
+                    "relations": [],
+                    "source_documents": [],
+                },
+            )
+
+            if document_id not in source_record["document_ids"]:
+                source_record["document_ids"].append(document_id)
+            if document_id not in target_record["document_ids"]:
+                target_record["document_ids"].append(document_id)
+            if document_id not in source_record["source_documents"]:
+                source_record["source_documents"].append(document_id)
+            if document_id not in target_record["source_documents"]:
+                target_record["source_documents"].append(document_id)
+
+            source_record["relations"].append(
+                {
+                    "document_id": document_id,
+                    "relation": relation_name,
+                    "source": source_name,
+                    "target": target_name,
+                }
+            )
+            target_record["related_entities"].append(
+                {
+                    "document_id": document_id,
+                    "relation": relation_name,
+                    "source": source_name,
+                    "target": target_name,
+                }
+            )
+
+            seen_edges.add((source_name, target_name, relation_name, document_id))
+
+        for entity_name in entity_names:
+            if not graph.has_node(entity_name):
+                graph.add_node(
+                    Node(
+                        entity_name,
+                        "entity",
+                        {
+                            "name": entity_name,
+                            "document_ids": [document_id],
+                            "source_documents": [document_id],
+                        },
+                    )
+                )
+
+            if not graph.has_edge(entity_name, document_node_id):
+                graph.add_edge(
+                    Edge(
+                        entity_name,
+                        document_node_id,
+                        "mentioned_in",
+                        metadata={
+                            "document_id": document_id,
+                            "source": "metadata.entities",
+                        },
+                    )
+                )
+
+    for entity_name, record in entity_metadata.items():
+        if graph.has_node(entity_name):
+            continue
+        graph.add_node(Node(entity_name, "entity", record))
+
+    for source_name, target_name, relation_name, document_id in sorted(
+        seen_edges,
+        key=lambda item: (item[0], item[1], item[2], item[3]),
+    ):
+        if not graph.has_node(source_name):
+            graph.add_node(
+                Node(source_name, "entity", {"name": source_name})
+            )
+        if not graph.has_node(target_name):
+            graph.add_node(
+                Node(target_name, "entity", {"name": target_name})
+            )
+        if not graph.has_edge(source_name, target_name):
+            graph.add_edge(
+                Edge(
+                    source_name,
+                    target_name,
+                    relation_name,
+                    metadata={
+                        "document_id": document_id,
+                        "source": source_name,
+                        "target": target_name,
+                    },
+                )
+            )
+
+    return graph_store.graph
 
 
 def load_corpus(path: Path = DATA_PATH) -> Corpus:
@@ -119,10 +318,22 @@ def create_search_engine(
         scorer=BM25(builder.forward_index, builder.statistics),
     )
 
+    graph_retriever = None
+    try:
+        graph = build_graph_from_corpus(corpus)
+        graph_retriever = SimpleGraphRetriever(
+            graph,
+            max_hops=2,
+            document_node_type="document",
+        )
+    except Exception:
+        graph_retriever = None
+
     if not configure_optional_components:
         return SearchEngine(
             query_processor=QueryProcessor(analyzer),
             lexical_retriever=retriever,
+            graph_retriever=graph_retriever,
         )
 
     dense_retriever = None
@@ -156,6 +367,7 @@ def create_search_engine(
         query_processor=QueryProcessor(analyzer),
         lexical_retriever=retriever,
         dense_retriever=dense_retriever,
+        graph_retriever=graph_retriever,
         reranker=reranker,
         document_text_provider=lambda document_id: corpus[
             int(document_id)
@@ -168,6 +380,7 @@ def create_runtime(corpus: Corpus) -> Runtime:
     """Build the CLI runtime and retain optional-component diagnostics."""
 
     dense_error = None
+    graph_error = None
     reranker_error = None
     generator_error = None
 
@@ -184,6 +397,9 @@ def create_runtime(corpus: Corpus) -> Runtime:
             "Sentence Transformers embedding model is unavailable"
         )
 
+    if engine.graph_retriever is None:
+        graph_error = "graph metadata is not available or malformed"
+
     if engine.reranker is None:
         reranker_error = (
             "Sentence Transformers CrossEncoder model is unavailable"
@@ -198,6 +414,7 @@ def create_runtime(corpus: Corpus) -> Runtime:
         corpus=corpus,
         engine=engine,
         dense_error=dense_error,
+        graph_error=graph_error,
         reranker_error=reranker_error,
         generator_error=generator_error,
     )
@@ -234,20 +451,28 @@ def print_menu(runtime: Runtime) -> None:
         "2. Dense Retrieval - "
         + _status("dense", runtime.dense_available, runtime.dense_error)
     )
-    print("3. Graph Retrieval - NOT CONFIGURED (no graph data source)")
+    print(
+        "3. Graph Retrieval - "
+        + _status("graph", runtime.graph_available, runtime.graph_error)
+    )
     print(
         "4. Hybrid Retrieval - "
         + _status(
             "hybrid",
-            runtime.dense_available,
-            "lexical + dense" if runtime.dense_available else "dense retriever required",
+            runtime.dense_available or runtime.graph_available,
+            "lexical + dense"
+            if runtime.dense_available
+            else "lexical + graph"
+            if runtime.graph_available
+            else "dense or graph retriever required",
         )
     )
     print(
         "5. Hybrid + Reranking - "
         + _status(
             "reranking",
-            runtime.dense_available and runtime.reranker_available,
+            runtime.reranker_available
+            and (runtime.dense_available or runtime.graph_available),
             runtime.reranker_error,
         )
     )
@@ -309,23 +534,26 @@ def _print_legacy_results(results: list[tuple[int, float]], corpus: Corpus) -> N
 
 
 def _run_mode(runtime: Runtime, selection: str) -> None:
-    if selection == "3":
-        print("Graph Retrieval: NOT CONFIGURED (no graph data source).")
+    if selection == "3" and not runtime.graph_available:
+        print(f"Graph Retrieval: NOT CONFIGURED. {runtime.graph_error}")
         return
 
     if selection == "2" and not runtime.dense_available:
         print(f"Dense Retrieval: NOT CONFIGURED. {runtime.dense_error}")
         return
 
-    if selection == "4" and not runtime.dense_available:
-        print("Hybrid Retrieval: NOT CONFIGURED. Dense retriever is unavailable.")
+    if selection == "4" and not (
+        runtime.dense_available or runtime.graph_available
+    ):
+        print("Hybrid Retrieval: NOT CONFIGURED. Dense or graph retriever is unavailable.")
         return
 
     if selection == "5" and not (
-        runtime.dense_available and runtime.reranker_available
+        runtime.reranker_available
+        and (runtime.dense_available or runtime.graph_available)
     ):
         print("Hybrid + Reranking: NOT CONFIGURED.")
-        print(runtime.reranker_error or runtime.dense_error)
+        print(runtime.reranker_error or runtime.dense_error or runtime.graph_error)
         return
 
     if selection == "6" and not (
@@ -355,6 +583,14 @@ def _run_mode(runtime: Runtime, selection: str) -> None:
             results = runtime.engine.dense_retriever.retrieve(
                 query,
                 k=top_k,
+            )
+            _print_results(results, runtime.corpus)
+            return
+
+        if selection == "3":
+            results = runtime.engine.graph_retriever.retrieve(
+                query,
+                top_k=top_k,
             )
             _print_results(results, runtime.corpus)
             return

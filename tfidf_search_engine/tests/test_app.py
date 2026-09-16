@@ -17,7 +17,7 @@ class TestApplicationLayer(unittest.TestCase):
         engine = app.create_search_engine(corpus)
 
         self.assertIsInstance(corpus, Corpus)
-        self.assertEqual(len(corpus), 6)
+        self.assertEqual(len(corpus), 15)
         self.assertIsInstance(engine, SearchEngine)
 
     def test_loader_rejects_malformed_records(self):
@@ -39,11 +39,11 @@ class TestApplicationLayer(unittest.TestCase):
 
         self.assertEqual(
             [document_id for document_id, _ in single_term],
-            [1, 3],
+            [13, 4, 10],
         )
         self.assertEqual(
             [document_id for document_id, _ in multi_term],
-            [1, 3, 2],
+            [13, 4, 10, 12],
         )
         self.assertEqual(multi_term, engine.search("machine learning"))
 
@@ -62,7 +62,7 @@ class TestApplicationLayer(unittest.TestCase):
         results = engine.search("machine learning", top_k=2)
 
         self.assertEqual(len(results), 2)
-        self.assertEqual([document_id for document_id, _ in results], [1, 3])
+        self.assertEqual([document_id for document_id, _ in results], [13, 4])
 
     def test_run_handles_repeated_queries_and_clean_exit(self):
         output = io.StringIO()
@@ -72,10 +72,10 @@ class TestApplicationLayer(unittest.TestCase):
             app.run()
 
         rendered = output.getvalue()
-        self.assertIn("Documents loaded: 6", rendered)
-        self.assertIn("Indexed documents: 6", rendered)
-        self.assertIn("Machine learning is amazing", rendered)
-        self.assertIn("Cats chase mice", rendered)
+        self.assertIn("Documents loaded: 15", rendered)
+        self.assertIn("Indexed documents: 15", rendered)
+        self.assertIn("Suppose a graph contains Machine Learning", rendered)
+        self.assertIn("No results.", rendered)
         self.assertIn("Goodbye.", rendered)
 
     def test_run_handles_blank_input_and_eof(self):
