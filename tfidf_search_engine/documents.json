@@ -4,7 +4,11 @@
     "text": "Lexical retrieval matches query terms against indexed document terms. BM25 uses term frequency, inverse document frequency, and document length normalization to rank candidate documents.",
     "metadata": {
       "topic": "lexical retrieval",
-      "entities": ["BM25", "inverted index", "term frequency"],
+      "entities": [
+        "BM25",
+        "inverted index",
+        "term frequency"
+      ],
       "relations": [
         {
           "relation": "used_for",
@@ -22,7 +26,11 @@
     "text": "Dense retrieval represents documents and queries as embedding vectors. A semantic search can retrieve relevant text even when the query uses different words from the document.",
     "metadata": {
       "topic": "dense retrieval",
-      "entities": ["embeddings", "vectors", "semantic search"],
+      "entities": [
+        "embeddings",
+        "vectors",
+        "semantic search"
+      ],
       "relations": [
         {
           "relation": "uses",
@@ -40,7 +48,11 @@
     "text": "A vector store keeps embedding vectors together with document identifiers and metadata. Similarity search compares a query vector with stored vectors and returns the nearest candidates.",
     "metadata": {
       "topic": "vector database",
-      "entities": ["VectorStore", "cosine similarity", "embeddings"],
+      "entities": [
+        "VectorStore",
+        "cosine similarity",
+        "embeddings"
+      ],
       "relations": [
         {
           "relation": "stores",
@@ -108,7 +120,10 @@
     "text": "Reciprocal Rank Fusion, or RRF, merges ranked result lists using the rank position assigned by each retriever. It does not require raw BM25 and vector similarity scores to share the same numerical scale.",
     "metadata": {
       "topic": "rank fusion",
-      "entities": ["RRF", "Reciprocal Rank Fusion"],
+      "entities": [
+        "RRF",
+        "Reciprocal Rank Fusion"
+      ],
       "relations": [
         {
           "relation": "combines",
@@ -126,7 +141,11 @@
     "text": "Cross-encoder reranking scores a query and candidate document together. Retrieval first produces a manageable candidate set, and the cross-encoder then performs a more detailed relevance assessment on those candidates.",
     "metadata": {
       "topic": "reranking",
-      "entities": ["CrossEncoder", "reranking", "candidate set"],
+      "entities": [
+        "CrossEncoder",
+        "reranking",
+        "candidate set"
+      ],
       "relations": [
         {
           "relation": "reranks",
@@ -144,7 +163,11 @@
     "text": "Retrieval-augmented generation uses retrieved evidence as context for a language model. The generator receives the selected source text and produces an answer grounded in that supplied context.",
     "metadata": {
       "topic": "RAG",
-      "entities": ["RAG", "retrieved evidence", "language model"],
+      "entities": [
+        "RAG",
+        "retrieved evidence",
+        "language model"
+      ],
       "relations": [
         {
           "relation": "uses",
@@ -186,7 +209,11 @@
     "text": "An inverted index maps terms to the documents that contain those terms. A positional index additionally records token positions, which allows a system to answer phrase queries such as machine learning.",
     "metadata": {
       "topic": "indexing",
-      "entities": ["inverted index", "positional index", "phrase query"],
+      "entities": [
+        "inverted index",
+        "positional index",
+        "phrase query"
+      ],
       "relations": [
         {
           "relation": "supports",
@@ -204,7 +231,10 @@
     "text": "Consider the identifier CVE-2025-1234. Identifier searches often benefit from lexical matching because exact character sequences are important. Semantic similarity can retrieve conceptually related security documents without guaranteeing an exact identifier match.",
     "metadata": {
       "topic": "identifier search",
-      "entities": ["CVE-2025-1234", "security"],
+      "entities": [
+        "CVE-2025-1234",
+        "security"
+      ],
       "relations": [
         {
           "relation": "illustrates",
@@ -222,7 +252,11 @@
     "text": "Suppose a user asks, 'How do models learn patterns from examples?' A dense retriever can identify documents about representation learning or training even if the exact query words are absent.",
     "metadata": {
       "topic": "semantic query example",
-      "entities": ["representation learning", "training", "dense retrieval"],
+      "entities": [
+        "representation learning",
+        "training",
+        "dense retrieval"
+      ],
       "relations": [
         {
           "relation": "illustrates",
@@ -240,7 +274,11 @@
     "text": "Suppose a graph contains Machine Learning -> uses -> Neural Networks -> applied_to -> Computer Vision. A relationship query about how machine learning connects to computer vision can use graph traversal to discover the intermediate entities.",
     "metadata": {
       "topic": "graph example",
-      "entities": ["Machine Learning", "Neural Networks", "Computer Vision"],
+      "entities": [
+        "Machine Learning",
+        "Neural Networks",
+        "Computer Vision"
+      ],
       "relations": [
         {
           "relation": "uses",
@@ -289,7 +327,11 @@
     "text": "A grounded answer should preserve provenance. The system should retain the document IDs and source text used to build the final RAG context so that an answer can be traced back to the retrieved evidence.",
     "metadata": {
       "topic": "provenance",
-      "entities": ["provenance", "RAG context", "source evidence"],
+      "entities": [
+        "provenance",
+        "RAG context",
+        "source evidence"
+      ],
       "relations": [
         {
           "relation": "supports",

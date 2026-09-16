@@ -20,13 +20,36 @@ data/documents.json
     -> ranked terminal results
 ```
 
-The current application uses lexical BM25 retrieval. It does not use dense retrieval, graph retrieval, reranking, or text generation in the terminal workflow.
+The terminal application presents a capability-aware menu. Lexical BM25 is
+always available. Dense retrieval, hybrid fusion, CrossEncoder reranking, and
+RAG are enabled only when their existing local components initialize. Graph
+retrieval is reported as not configured because no graph data source is
+connected to `documents.json`.
+
+The verified programmatic orchestration path is available through
+`SearchEngine.retrieve()` and `SearchEngine.answer()`:
+
+```text
+raw query
+  -> QueryPlanner
+  -> lexical/dense/graph retrieval
+  -> HybridRetriever / ReciprocalRankFusion
+  -> CrossEncoder reranking
+  -> EvidenceBuilder
+  -> ContextBuilder
+  -> Generator
+  -> RAGResponse
+```
+
+`RAGResponse` exposes final retrieval results, source evidence, formatted
+context, and generated answer separately. The generator receives only the
+`RAGContext`; it does not retrieve documents independently.
 
 ## Requirements
 
 - Python 3.10 or newer is recommended.
 - Run commands from the `tfidf_search_engine` directory.
-- The current application uses the Python standard library, repository-local modules, and the `nltk` package declared in `requirements.txt`.
+- The current application uses the Python standard library, repository-local modules, `nltk`, `sentence-transformers`, and `ollama` declared in `requirements.txt`.
 
 Check the Python version:
 
@@ -42,6 +65,22 @@ From the repository root:
 cd tfidf_search_engine
 python app.py
 ```
+
+The interactive menu is:
+
+```text
+1. Lexical BM25
+2. Dense Retrieval
+3. Graph Retrieval
+4. Hybrid Retrieval
+5. Hybrid + Reranking
+6. RAG / Answer
+7. Exit
+```
+
+Each mode is labeled `AVAILABLE`, `NOT CONFIGURED`, or `NOT IMPLEMENTED`.
+Unavailable modes are not executed. Select a mode, enter a query, and provide
+a positive `top_k` where requested.
 
 The application prints a startup banner and reports the number of loaded and indexed documents:
 
@@ -222,7 +261,10 @@ Run the complete test suite from the `tfidf_search_engine` directory:
 python -m unittest discover -s tests -v
 ```
 
-The application-layer tests are in `tests/test_app.py`. They verify corpus loading, engine construction, real searches, deterministic ranking, `top_k`, repeated queries, blank input, EOF, and clean exit.
+The application-layer tests are in `tests/test_app.py` and
+`tests/test_cli_modes.py`. They verify corpus loading, engine construction,
+menu dispatch, real lexical output, capability reporting, invalid input,
+unavailable graph handling, and clean exit.
 
 The lower-level tests cover analysis, indexing, retrieval, ranking, graph, hybrid, and vector components.
 
@@ -249,6 +291,58 @@ A successful check prints:
 ```text
 No broken requirements found.
 ```
+
+## Programmatic End-to-End Retrieval and RAG
+
+The complete verified pipeline is available from the menu when its components
+are configured. Programmatic callers can also construct `SearchEngine` with
+the independently verified dense and graph retrievers, a `Reranker`, a
+document text provider, and a `Generator`. Call `retrieve(query, top_k)` to
+inspect planner-selected candidates without generation, or call
+`answer(query, top_k)` to receive a `RAGResponse`.
+
+The response fields provide separate inspection points:
+
+- `results`: final reranked `RetrievalResult` objects.
+- `evidence`: source document IDs and text resolved by `EvidenceBuilder`.
+- `context`: the bounded `RAGContext` passed to the generator.
+- `answer`: generated text, or `None` when retrieval has no results.
+
+For local Ollama generation, configure an installed model explicitly:
+
+```python
+from rag import OllamaGenerator
+
+generator = OllamaGenerator(model_name="qwen2.5:7b", timeout=120)
+```
+
+Alternatively set `OLLAMA_MODEL` and optionally `OLLAMA_HOST`. Missing models,
+provider errors, timeouts, invalid responses, and empty contexts raise explicit
+errors. The generator never invents a response when Ollama is unavailable.
+
+The graph retriever currently requires graph nodes and edges to be supplied by
+the caller. It is not automatically populated from `data/documents.json`.
+
+## Verification Status
+
+Verified on 2026-09-16:
+
+| Area                             | Status                                                    |
+| -------------------------------- | --------------------------------------------------------- |
+| Documents and indexing           | VERIFIED                                                  |
+| Lexical retrieval                | VERIFIED                                                  |
+| Dense retrieval                  | VERIFIED with local Sentence Transformers                 |
+| Graph retrieval                  | VERIFIED with a programmatically supplied graph           |
+| Hybrid RRF fusion                | VERIFIED                                                  |
+| CrossEncoder reranking           | VERIFIED with local Sentence Transformers                 |
+| Evidence and context provenance  | VERIFIED                                                  |
+| Ollama generation                | VERIFIED with local `qwen2.5:7b`                          |
+| Ollama environment configuration | NOT CONFIGURED; explicit model configuration was used     |
+| Full RAG path in `app.py`        | VERIFIED; unavailable components remain explicitly marked |
+
+The complete suite passed 99 tests. Real queries confirmed deterministic
+retrieval, justified reranking, source-traceable evidence, grounded answers,
+no-result behavior, and explicit failure for an unavailable Ollama model.
 
 ## Troubleshooting
 
@@ -284,6 +378,8 @@ This means no indexed document matched the analyzed query terms. Try a term that
 
 - The index is rebuilt on every startup.
 - The application is terminal-only.
-- The CLI currently displays document text and BM25 scores, not metadata.
-- Retrieval uses the existing lexical BM25 path.
+- The CLI displays document text and retrieval scores; RAG also displays source evidence.
+- Modes that require unavailable models or providers are explicitly marked not configured.
 - There is no persistence layer for the built index in the application workflow.
+- The full planner/dense/graph/RAG orchestration is programmatic; `app.py` does not yet construct it.
+- Graph data is not derived automatically from `data/documents.json`.

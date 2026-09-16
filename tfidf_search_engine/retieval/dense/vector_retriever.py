@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from retieval.dense.retriever import DenseRetriever
+from retieval.lexical.retriever import RetrievalResult
 from vector.vector_store import VectorStore
 
 
@@ -37,7 +38,7 @@ class VectorRetriever(DenseRetriever):
         query: str,
         k: int = 5,
         metadata_filter: Mapping[str, Any] | None = None,
-    ) -> list[tuple[str, float]]:
+    ) -> list[RetrievalResult]:
         return super().retrieve(
             query=query,
             k=k,

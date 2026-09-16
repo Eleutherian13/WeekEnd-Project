@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import re
 
 from graph.graph import Graph
+from graph.node import Node
 from graph.traversal import GraphTraversal
 from retieval.lexical.retriever import RetrievalResult
 from retieval.graph.retriever import GraphRetriever
@@ -14,18 +16,15 @@ class SimpleGraphRetriever(GraphRetriever):
 
     Retrieval strategy
     ------------------
-    1. Use supplied graph nodes as retrieval starting points.
+    1. Match query tokens against graph node fields.
     2. Traverse the graph up to a configurable number of hops.
     3. Convert reached document nodes into retrieval results.
     4. Score documents according to their graph distance.
     5. Return the highest-scoring documents.
 
-    This implementation intentionally does not perform semantic
-    query-to-node matching. The caller supplies starting nodes.
-
-    That keeps graph traversal independent from query understanding.
-    A more advanced implementation can later add entity linking,
-    vector-based node matching, or query planning.
+    Matching is intentionally lexical and deterministic. It provides a
+    small query-to-node boundary without introducing a second indexing
+    or entity-linking subsystem.
     """
 
     def __init__(
@@ -78,6 +77,23 @@ class SimpleGraphRetriever(GraphRetriever):
 
                 self._graph.require_node(node_id)
 
+    def match_nodes(self, query: str) -> tuple[str, ...]:
+        """Return graph nodes whose fields contain every query token."""
+
+        self._validate_query(query)
+        query_tokens = self._tokens(query)
+
+        matching_nodes: list[str] = []
+
+        for node in self._graph.nodes():
+            if node.node_type == self._document_node_type:
+                continue
+
+            if self._matches(node, query_tokens):
+                matching_nodes.append(node.node_id)
+
+        return tuple(matching_nodes)
+
     def retrieve(
         self,
         query: str,
@@ -93,24 +109,22 @@ class SimpleGraphRetriever(GraphRetriever):
         are separate responsibilities.
         """
 
-        if not isinstance(query, str):
-            raise TypeError("query must be a string")
+        self._validate_query(query)
+        self._validate_top_k(top_k)
 
-        if not query.strip():
-            raise ValueError("query must not be empty")
-
-        if not isinstance(top_k, int):
-            raise TypeError("top_k must be an integer")
-
-        if isinstance(top_k, bool):
-            raise TypeError("top_k must be an integer")
-
-        if top_k <= 0:
-            raise ValueError("top_k must be greater than 0")
+        matching_nodes = self.match_nodes(query)
+        if self._start_nodes:
+            start_nodes = tuple(
+                node_id
+                for node_id in self._start_nodes
+                if node_id in matching_nodes
+            )
+        else:
+            start_nodes = matching_nodes
 
         candidates: dict[str, float] = {}
 
-        for start_node in self._start_nodes:
+        for start_node in start_nodes:
             for node_id, depth in self._traverse_with_depth(
                 start_node
             ):
@@ -148,6 +162,61 @@ class SimpleGraphRetriever(GraphRetriever):
             )
 
         return results
+
+    @staticmethod
+    def _validate_query(query: str) -> None:
+        if not isinstance(query, str):
+            raise TypeError("query must be a string")
+
+        if not query.strip():
+            raise ValueError("query must not be empty")
+
+    @staticmethod
+    def _validate_top_k(top_k: int) -> None:
+        if not isinstance(top_k, int) or isinstance(top_k, bool):
+            raise TypeError("top_k must be an integer")
+
+        if top_k <= 0:
+            raise ValueError("top_k must be greater than 0")
+
+    @staticmethod
+    def _tokens(value: str) -> set[str]:
+        return set(re.findall(r"[a-z0-9]+", value.casefold()))
+
+    @classmethod
+    def _matches(
+        cls,
+        node: Node,
+        query_tokens: set[str],
+    ) -> bool:
+        searchable_values = [node.node_id, node.node_type]
+        searchable_values.extend(cls._metadata_values(node.metadata))
+
+        node_tokens: set[str] = set()
+        for value in searchable_values:
+            node_tokens.update(cls._tokens(value))
+
+        return query_tokens.issubset(node_tokens)
+
+    @classmethod
+    def _metadata_values(cls, metadata: object) -> list[str]:
+        if isinstance(metadata, str):
+            return [metadata]
+
+        if isinstance(metadata, dict):
+            values: list[str] = []
+            for key, value in metadata.items():
+                values.extend(cls._metadata_values(key))
+                values.extend(cls._metadata_values(value))
+            return values
+
+        if isinstance(metadata, (list, tuple, set)):
+            values = []
+            for value in metadata:
+                values.extend(cls._metadata_values(value))
+            return values
+
+        return [str(metadata)]
 
     def _traverse_with_depth(
         self,

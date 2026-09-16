@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any
 
+from document.documents import Document
+from retieval.lexical.retriever import RetrievalResult
+from vector.embedding import EmbeddingModel
 from vector.vector_store import VectorStore
 
 
@@ -37,12 +40,57 @@ class DenseRetriever:
 
         self.vector_store = vector_store
 
+    @classmethod
+    def from_documents(
+        cls,
+        documents: Iterable[Document],
+        embedding_model: EmbeddingModel,
+        metric: str = "cosine",
+    ) -> DenseRetriever:
+        """Build a dense retriever from documents and one vector store."""
+
+        if not isinstance(embedding_model, EmbeddingModel):
+            raise TypeError(
+                "embedding_model must be an EmbeddingModel instance."
+            )
+
+        if isinstance(documents, (str, bytes)):
+            raise TypeError(
+                "documents must be an iterable of Document objects."
+            )
+
+        try:
+            document_iterator = iter(documents)
+        except TypeError as error:
+            raise TypeError(
+                "documents must be an iterable of Document objects."
+            ) from error
+
+        vector_store = VectorStore(
+            embedding_model=embedding_model,
+            metric=metric,
+        )
+
+        for document in document_iterator:
+            if not isinstance(document, Document):
+                raise TypeError(
+                    "documents must contain only Document objects."
+                )
+
+            vector_store.add_text(
+                vector_id=str(document.document_id),
+                text=document.text,
+                metadata=document.metadata,
+            )
+
+        return cls(vector_store)
+
     def retrieve(
         self,
         query: str,
         k: int = 5,
         metadata_filter: Mapping[str, Any] | None = None,
-    ) -> list[tuple[str, float]]:
+    ) -> list[RetrievalResult]:
         """
         Retrieve the top-k documents semantically similar
         to the supplied query.
@@ -60,10 +108,8 @@ class DenseRetriever:
 
         Returns
         -------
-        list[tuple[str, float]]
-            Ranked results represented as:
-
-                (document_id, score)
+        list[RetrievalResult]
+            Ranked results with document IDs, scores, and metadata.
         """
 
         if not isinstance(query, str):
@@ -100,7 +146,11 @@ class DenseRetriever:
         )
 
         return [
-            (result.id, result.score)
+            RetrievalResult(
+                document_id=result.id,
+                score=result.score,
+                metadata=result.metadata,
+            )
             for result in results
         ]
 

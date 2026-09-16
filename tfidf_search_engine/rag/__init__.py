@@ -1,6 +1,6 @@
 from .context_builder import ContextBuilder, RAGContext
 from .evidence import Evidence, EvidenceBuilder
-from .generator import Generator
+from .generator import Generator, OllamaGenerator
 from .retriever import RAGRetriever
 
 __all__ = [
@@ -8,6 +8,7 @@ __all__ = [
     "Evidence",
     "EvidenceBuilder",
     "Generator",
+    "OllamaGenerator",
     "RAGContext",
     "RAGRetriever",
 ]

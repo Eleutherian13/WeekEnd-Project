@@ -6,7 +6,11 @@ The verified application loads documents from `data/documents.json`, builds an i
 
 ## Current Status
 
-The supported end-to-end workflow is lexical BM25 retrieval:
+The terminal application exposes the verified retrieval modes through an
+interactive menu. Lexical BM25 is always available; dense, hybrid, reranking,
+and RAG entries are shown only when their configured local components load.
+Graph retrieval remains unavailable unless graph data is supplied by an
+existing graph-building integration.
 
 ```text
 data/documents.json
@@ -20,7 +24,57 @@ data/documents.json
     -> ranked CLI output
 ```
 
-The repository also contains vector, graph, hybrid, reranking, evaluation, planning, and RAG source trees. They are not part of the verified terminal application workflow and should not be treated as production-ready integrations.
+The programmatic and CLI paths reuse the repository's vector, graph, hybrid,
+reranking, planning, and RAG components. The CLI does not create graph nodes
+from `documents.json`.
+
+The programmatic `SearchEngine` also exposes a verified orchestrated path when
+the relevant components are configured:
+
+```text
+raw query
+  -> QueryPlanner
+  -> lexical/dense/graph retrieval
+  -> ReciprocalRankFusion
+  -> CrossEncoder reranking
+  -> EvidenceBuilder
+  -> ContextBuilder
+  -> Generator
+  -> RAGResponse
+```
+
+Use `SearchEngine.retrieve()` for planner-selected candidates and
+`SearchEngine.answer()` for a response containing retrieved results, evidence,
+context, and an optional generated answer. The CLI is a thin adapter over
+these APIs.
+
+## End-to-End Verification
+
+Verification performed on 2026-09-16:
+
+| Component                               | Status         | Evidence                                                                                    |
+| --------------------------------------- | -------------- | ------------------------------------------------------------------------------------------- |
+| Document loading and in-memory indexing | VERIFIED       | `data/documents.json` loaded and indexed 6 documents.                                       |
+| Lexical BM25 retrieval                  | VERIFIED       | Real CLI queries returned deterministic ranked results and `No results.` for unknown terms. |
+| Dense retrieval                         | VERIFIED       | Local Sentence Transformers embeddings returned valid deterministic results.                |
+| Graph retrieval                         | VERIFIED       | Query-matched graph entities traversed to document nodes with distance scores.              |
+| Hybrid fusion                           | VERIFIED       | Real candidates were unified through the existing RRF implementation.                       |
+| CrossEncoder reranking                  | VERIFIED       | Local CrossEncoder scores changed ordering when justified by scores.                        |
+| Evidence and context                    | VERIFIED       | Evidence IDs and text traced back to corpus documents.                                      |
+| Ollama generation                       | VERIFIED       | `qwen2.5:7b` generated answers from supplied RAG context.                                   |
+| Missing model/provider handling         | VERIFIED       | Missing configuration and unknown models failed explicitly.                                 |
+| Environment-based Ollama configuration  | NOT CONFIGURED | `OLLAMA_MODEL` and `OLLAMA_HOST` were unset; explicit model configuration was used.         |
+| Full RAG wiring in `app.py`             | VERIFIED       | The menu invokes retrieval, reranking, evidence, context, and generation when configured.   |
+
+The complete test suite passed with 99 tests. Real programmatic queries
+exercised lexical, dense, graph, and hybrid retrieval, followed by reranking,
+evidence construction, context construction, and Ollama answer generation.
+Unavailable providers did not produce fabricated answers.
+
+Remaining blockers are configuration and data-source limitations rather than
+broken components: graph nodes are supplied programmatically rather than built
+from `documents.json`, and environment-based Ollama configuration is optional
+even though explicit local model selection is supported.
 
 ## Capabilities
 
@@ -38,7 +92,9 @@ The current CLI can:
 
 - Python 3.10 or newer is recommended.
 - `nltk` is required by the default Porter stemmer used by the application.
-- No external database, model server, API key, or downloaded embedding model is required for the verified CLI path.
+- `sentence-transformers` is required for the verified dense and reranking integrations.
+- `ollama` is required only when using the local Ollama RAG generator.
+- No external database, API key, or downloaded embedding model is required for the verified CLI path.
 
 ## Installation
 
@@ -63,6 +119,10 @@ python -m pip install -r requirements.txt
 
 The application currently uses NLTK's built-in `PorterStemmer`, so no NLTK corpus download is required for the default CLI path.
 
+The Ollama generator reads `OLLAMA_MODEL` and optionally `OLLAMA_HOST` from the
+environment. It raises an explicit provider or generation error when Ollama or
+the configured model is unavailable; it does not fabricate an answer.
+
 ## Run the Application
 
 From `tfidf_search_engine`:
@@ -70,6 +130,10 @@ From `tfidf_search_engine`:
 ```powershell
 python app.py
 ```
+
+The menu reports each mode as `AVAILABLE`, `NOT CONFIGURED`, or
+`NOT IMPLEMENTED`. Select a mode, enter a query, and provide a positive
+`top_k`. RAG output includes the answer and source document evidence.
 
 Startup reports the loaded and indexed document counts:
 
@@ -146,6 +210,7 @@ The index is rebuilt in memory each time `app.py` starts. Restart the applicatio
 - `search/`: the `SearchEngine` orchestration facade.
 - `app.py`: application startup, corpus loading, component construction, CLI input, output, and shutdown.
 - `tests/`: unit and application-layer tests.
+- `search/search_engine.py`: preserves the legacy lexical `search()` API and adds the planner-driven `retrieve()` and `answer()` orchestration APIs.
 
 The package directory is currently named `retieval`; this spelling is preserved by the active imports and is not renamed by the CLI application.
 
@@ -175,7 +240,7 @@ Check installed package consistency:
 python -m pip check
 ```
 
-The documented test command covers the repository's `tests/` suite, including application, SearchEngine, lexical retrieval, indexing, graph, hybrid, and vector-related tests present in that directory.
+The documented test command covers the repository's `tests/` suite, including application, SearchEngine orchestration, lexical, dense, graph, hybrid, reranking, RAG, indexing, and vector-related tests present in that directory.
 
 ## Contributing
 
@@ -196,7 +261,8 @@ Current limitations:
 - The verified application is terminal-only.
 - Indexes are rebuilt on every startup and are not persisted by the CLI workflow.
 - The CLI displays document text and BM25 scores; it does not display metadata.
-- The active application path uses lexical BM25 retrieval only.
+- The active application path exposes lexical, dense, hybrid, reranking, and RAG modes when their local dependencies are configured.
+- Graph retrieval is not available in the CLI because no graph-building source is connected to `documents.json`.
 - The repository contains additional experimental or standalone subsystem code that is not integrated into this CLI workflow.
 - The retrieval package name is currently `retieval`, including its active imports.
 

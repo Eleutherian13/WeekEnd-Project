@@ -66,7 +66,7 @@ class TestApplicationLayer(unittest.TestCase):
 
     def test_run_handles_repeated_queries_and_clean_exit(self):
         output = io.StringIO()
-        input_stream = io.StringIO("machine\ncats\nexit\n")
+        input_stream = io.StringIO("1\nmachine\n2\n1\ncats\n2\n7\n")
 
         with patch("sys.stdin", input_stream), redirect_stdout(output):
             app.run()
@@ -80,7 +80,7 @@ class TestApplicationLayer(unittest.TestCase):
 
     def test_run_handles_blank_input_and_eof(self):
         blank_output = io.StringIO()
-        with patch("sys.stdin", io.StringIO("\nexit\n")), redirect_stdout(blank_output):
+        with patch("sys.stdin", io.StringIO("1\n\n7\n")), redirect_stdout(blank_output):
             app.run()
 
         self.assertIn("Please enter a query.", blank_output.getvalue())

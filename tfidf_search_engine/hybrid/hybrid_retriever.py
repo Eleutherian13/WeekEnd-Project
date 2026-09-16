@@ -4,9 +4,11 @@ from collections.abc import Sequence
 from typing import Protocol, cast
 
 from analysis.analyzer import Analyzer
+from planning import QueryPlan, QueryPlanner, RetrievalMode
 from query.query import Query
 from query.query_processing import QueryProcessor
 from retieval.dense.retriever import DenseRetriever
+from retieval.graph.retriever import GraphRetriever
 from retieval.lexical.retriever import LexicalRetriever
 from retieval.lexical.retriever import RetrievalResult
 
@@ -59,6 +61,7 @@ class HybridRetriever:
         retrievers: Sequence[Retriever],
         fusion_strategy: FusionStrategy,
         query_processor: QueryProcessor | None = None,
+        planner: QueryPlanner | None = None,
     ) -> None:
         if not isinstance(retrievers, Sequence):
             raise TypeError(
@@ -92,12 +95,25 @@ class HybridRetriever:
                 "query_processor must be a QueryProcessor or None"
             )
 
+        if planner is not None and not isinstance(
+            planner,
+            QueryPlanner,
+        ):
+            raise TypeError(
+                "planner must be a QueryPlanner or None"
+            )
+
         self._retrievers = tuple(retrievers)
         self._fusion_strategy = fusion_strategy
         self._query_processor = (
             query_processor
             if query_processor is not None
             else QueryProcessor(Analyzer())
+        )
+        self._planner = (
+            planner
+            if planner is not None
+            else QueryPlanner()
         )
 
     @property
@@ -109,6 +125,11 @@ class HybridRetriever:
     def fusion_strategy(self) -> FusionStrategy:
         """Return the configured fusion strategy."""
         return self._fusion_strategy
+
+    @property
+    def planner(self) -> QueryPlanner:
+        """Return the query planner used for mode selection."""
+        return self._planner
 
     def retrieve(
         self,
@@ -124,21 +145,58 @@ class HybridRetriever:
             top_k=top_k,
         )
 
+        plan = self._planner.plan(
+            query=query,
+            top_k=top_k,
+        )
+        selected_retrievers = self._select_retrievers(plan)
+
+        if not selected_retrievers:
+            return []
+
         result_lists: list[Sequence[RetrievalResult]] = []
 
-        for retriever in self._retrievers:
+        for retriever in selected_retrievers:
             results = self._retrieve(
                 retriever=retriever,
                 query=query,
-                top_k=top_k,
+                top_k=plan.candidate_k,
             )
 
             result_lists.append(results)
 
         return self._fusion_strategy.fuse(
             result_lists=result_lists,
-            top_k=top_k,
+            top_k=plan.final_k,
         )
+
+    def _select_retrievers(
+        self,
+        plan: QueryPlan,
+    ) -> tuple[Retriever, ...]:
+        """Select configured retrievers enabled by the query plan."""
+
+        enabled_modes = set(plan.enabled_modes)
+        selected: list[Retriever] = []
+
+        for retriever in self._retrievers:
+            if (
+                isinstance(retriever, LexicalRetriever)
+                and RetrievalMode.LEXICAL in enabled_modes
+            ):
+                selected.append(retriever)
+            elif (
+                isinstance(retriever, DenseRetriever)
+                and RetrievalMode.DENSE in enabled_modes
+            ):
+                selected.append(retriever)
+            elif (
+                isinstance(retriever, GraphRetriever)
+                and RetrievalMode.GRAPH in enabled_modes
+            ):
+                selected.append(retriever)
+
+        return tuple(selected)
 
     def _retrieve(
         self,
@@ -169,10 +227,8 @@ class HybridRetriever:
                 k=top_k,
             )
 
-            return [
-                self._tuple_to_result(result)
-                for result in dense_results
-            ]
+            self._validate_results(dense_results)
+            return dense_results
 
         results = retriever.retrieve(
             query=query,
@@ -184,13 +240,19 @@ class HybridRetriever:
                 "retriever results must be a sequence"
             )
 
+        self._validate_results(results)
+
+        return results
+
+    @staticmethod
+    def _validate_results(
+        results: Sequence[RetrievalResult],
+    ) -> None:
         for result in results:
             if not isinstance(result, RetrievalResult):
                 raise TypeError(
                     "retrievers must return RetrievalResult objects"
                 )
-
-        return results
 
     @staticmethod
     def _tuple_to_result(

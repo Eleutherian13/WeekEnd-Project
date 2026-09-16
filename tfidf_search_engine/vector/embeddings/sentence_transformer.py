@@ -69,7 +69,7 @@ class SentenceTransformerEmbedding(EmbeddingModel):
         )
 
         embedding = self._validate_embedding(
-            embedding
+            [float(value) for value in embedding]
         )
 
         self._validate_dimension(embedding)
@@ -104,7 +104,9 @@ class SentenceTransformerEmbedding(EmbeddingModel):
         )
 
         validated_embeddings = [
-            self._validate_embedding(embedding)
+            self._validate_embedding(
+                [float(value) for value in embedding]
+            )
             for embedding in embeddings
         ]
 

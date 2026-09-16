@@ -12,7 +12,9 @@ from retieval.lexical.retriever import RetrievalResult
 class TestGraph(unittest.TestCase):
     def setUp(self) -> None:
         self.graph = Graph()
-        self.graph.add_node(Node("query", "query"))
+        self.graph.add_node(
+            Node("query", "query", {"name": "machine"})
+        )
         self.graph.add_node(Node("entity", "entity"))
         self.graph.add_node(Node("document", "document"))
         self.graph.add_edge(Edge("query", "entity", "mentions"))
