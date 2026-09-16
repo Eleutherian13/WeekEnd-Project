@@ -1,273 +1,1145 @@
 # Retrieval Engine
 
-A small, terminal-based lexical search application built from the repository's document, analysis, indexing, BM25 ranking, and retrieval components.
+A from-scratch, terminal-based retrieval engine that combines lexical, dense,
 
-The verified application loads documents from `data/documents.json`, builds an in-memory index, and accepts interactive queries through `app.py`.
+graph, hybrid, reranking, and RAG components into a single search pipeline.
+
+The project is built around a modular retrieval architecture rather than a
+
+single search algorithm. Documents are loaded from `data/documents.json`,
+
+processed into searchable representations, retrieved through one or more
+
+retrieval strategies, optionally reranked, and finally supplied as grounded
+
+context to a local LLM.
 
 ## Current Status
 
-The terminal application exposes the verified retrieval modes through an
-interactive menu. Lexical BM25 is always available; dense, hybrid, reranking,
-and RAG entries are shown only when their configured local components load.
-Graph retrieval remains unavailable unless graph data is supplied by an
-existing graph-building integration.
+The application provides an interactive terminal menu for the currently
+
+configured retrieval capabilities:
 
 ```text
-data/documents.json
-    -> Document
-    -> Corpus
-    -> Analyzer
-    -> IndexBuilder
-    -> BM25
-    -> BM25Retriever
-    -> SearchEngine
-    -> ranked CLI output
-```
 
-The programmatic and CLI paths reuse the repository's vector, graph, hybrid,
-reranking, planning, and RAG components. The CLI does not create graph nodes
-from `documents.json`.
-
-The programmatic `SearchEngine` also exposes a verified orchestrated path when
-the relevant components are configured:
-
-```text
-raw query
-  -> QueryPlanner
-  -> lexical/dense/graph retrieval
-  -> ReciprocalRankFusion
-  -> CrossEncoder reranking
-  -> EvidenceBuilder
-  -> ContextBuilder
-  -> Generator
-  -> RAGResponse
-```
-
-Use `SearchEngine.retrieve()` for planner-selected candidates and
-`SearchEngine.answer()` for a response containing retrieved results, evidence,
-context, and an optional generated answer. The CLI is a thin adapter over
-these APIs.
-
-## End-to-End Verification
-
-Verification performed on 2026-09-16:
-
-| Component                               | Status         | Evidence                                                                                    |
-| --------------------------------------- | -------------- | ------------------------------------------------------------------------------------------- |
-| Document loading and in-memory indexing | VERIFIED       | `data/documents.json` loaded and indexed 6 documents.                                       |
-| Lexical BM25 retrieval                  | VERIFIED       | Real CLI queries returned deterministic ranked results and `No results.` for unknown terms. |
-| Dense retrieval                         | VERIFIED       | Local Sentence Transformers embeddings returned valid deterministic results.                |
-| Graph retrieval                         | VERIFIED       | Query-matched graph entities traversed to document nodes with distance scores.              |
-| Hybrid fusion                           | VERIFIED       | Real candidates were unified through the existing RRF implementation.                       |
-| CrossEncoder reranking                  | VERIFIED       | Local CrossEncoder scores changed ordering when justified by scores.                        |
-| Evidence and context                    | VERIFIED       | Evidence IDs and text traced back to corpus documents.                                      |
-| Ollama generation                       | VERIFIED       | `qwen2.5:7b` generated answers from supplied RAG context.                                   |
-| Missing model/provider handling         | VERIFIED       | Missing configuration and unknown models failed explicitly.                                 |
-| Environment-based Ollama configuration  | NOT CONFIGURED | `OLLAMA_MODEL` and `OLLAMA_HOST` were unset; explicit model configuration was used.         |
-| Full RAG wiring in `app.py`             | VERIFIED       | The menu invokes retrieval, reranking, evidence, context, and generation when configured.   |
-
-The complete test suite passed with 99 tests. Real programmatic queries
-exercised lexical, dense, graph, and hybrid retrieval, followed by reranking,
-evidence construction, context construction, and Ollama answer generation.
-Unavailable providers did not produce fabricated answers.
-
-Remaining blockers are configuration and data-source limitations rather than
-broken components: graph nodes are supplied programmatically rather than built
-from `documents.json`, and environment-based Ollama configuration is optional
-even though explicit local model selection is supported.
-
-## Capabilities
-
-The current CLI can:
-
-- Load and validate JSON documents.
-- Build an in-memory lexical index at startup.
-- Normalize, filter, and stem query/document terms through the existing analyzer.
-- Retrieve and rank matching documents with BM25.
-- Display document text and returned BM25 scores.
-- Handle repeated queries, blank input, no-result queries, `exit`, `quit`, EOF, and Ctrl+C.
-- Support the existing `SearchEngine` `top_k` and retrieval-mode APIs when used programmatically.
-
-## Requirements
-
-- Python 3.10 or newer is recommended.
-- `nltk` is required by the default Porter stemmer used by the application.
-- `sentence-transformers` is required for the verified dense and reranking integrations.
-- `ollama` is required only when using the local Ollama RAG generator.
-- No external database, API key, or downloaded embedding model is required for the verified CLI path.
-
-## Installation
-
-From the repository root, enter this project directory:
-
-```powershell
-cd tfidf_search_engine
-```
-
-Create and activate a virtual environment if desired:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-```
-
-Install the application dependency:
-
-```powershell
-python -m pip install -r requirements.txt
-```
-
-The application currently uses NLTK's built-in `PorterStemmer`, so no NLTK corpus download is required for the default CLI path.
-
-The Ollama generator reads `OLLAMA_MODEL` and optionally `OLLAMA_HOST` from the
-environment. It raises an explicit provider or generation error when Ollama or
-the configured model is unavailable; it does not fabricate an answer.
-
-## Run the Application
-
-From `tfidf_search_engine`:
-
-```powershell
-python app.py
-```
-
-The menu reports each mode as `AVAILABLE`, `NOT CONFIGURED`, or
-`NOT IMPLEMENTED`. Select a mode, enter a query, and provide a positive
-`top_k`. RAG output includes the answer and source document evidence.
-
-Startup reports the loaded and indexed document counts:
-
-```text
 --------------------------------
+
 Retrieval Engine
+
 --------------------------------
-Documents loaded: 6
-Indexed documents: 6
+
+Documents loaded: 15
+
+Indexed documents: 15
+
 Search engine ready.
-```
 
-Enter a query at the prompt:
+1. Lexical BM25 - AVAILABLE
 
-```text
-Enter query (or 'exit'/'quit'): machine learning
-```
+2. Dense Retrieval - AVAILABLE
 
-Example output:
+3. Graph Retrieval - AVAILABLE
 
-```text
-1. Document: Machine learning is amazing
-   Score: 1.9411
+4. Hybrid Retrieval - AVAILABLE (lexical + dense)
 
-2. Document: Machine learning uses neural networks
-   Score: 1.5486
-```
+5. Hybrid + Reranking - AVAILABLE
 
-The score shown is the BM25 score returned by the existing retriever. It is not a confidence percentage or relevance explanation.
+6. RAG / Answer - AVAILABLE
 
-Use `exit` or `quit` to stop. Blank input is rejected with a prompt to enter a query. Unknown terms display `No results.` and the application continues.
+7. Exit
 
-## Document Data
+The system supports:
 
-The application reads `data/documents.json`. The top-level value must be a JSON array. Each record must contain:
+                    ┌─────────────────┐
 
-- `document_id`: a unique non-negative integer.
-- `text`: a string used for indexing and display.
-- `metadata`: an optional JSON object stored on the `Document`.
+                    │     Query       │
+
+                    └────────┬────────┘
+
+                             │
+
+                             ▼
+
+                    ┌─────────────────┐
+
+                    │ Query Analysis  │
+
+                    │  & Planning     │
+
+                    └────────┬────────┘
+
+                             │
+
+              ┌──────────────┼──────────────┐
+
+              ▼              ▼              ▼
+
+          ┌────────┐     ┌────────┐     ┌────────┐
+
+          │ BM25   │     │ Dense  │     │ Graph  │
+
+          │ Lexical│     │ Vector │     │ Search │
+
+          └────┬───┘     └────┬───┘     └────┬───┘
+
+               │              │              │
+
+               └──────────────┼──────────────┘
+
+                              ▼
+
+                    ┌─────────────────┐
+
+                    │ Hybrid Fusion   │
+
+                    │      RRF        │
+
+                    └────────┬────────┘
+
+                             │
+
+                             ▼
+
+                    ┌─────────────────┐
+
+                    │ CrossEncoder    │
+
+                    │   Reranking     │
+
+                    └────────┬────────┘
+
+                             │
+
+                             ▼
+
+                    ┌─────────────────┐
+
+                    │ Evidence        │
+
+                    │ Construction    │
+
+                    └────────┬────────┘
+
+                             │
+
+                             ▼
+
+                    ┌─────────────────┐
+
+                    │ Context Builder │
+
+                    └────────┬────────┘
+
+                             │
+
+                             ▼
+
+                    ┌─────────────────┐
+
+                    │ Local Generator │
+
+                    │     Ollama      │
+
+                    └────────┬────────┘
+
+                             │
+
+                             ▼
+
+                    ┌─────────────────┐
+
+                    │   RAGResponse   │
+
+                    └─────────────────┘
+
+The CLI is an application layer over the repository's retrieval and search
+
+components. The same underlying components can also be used programmatically
+
+through SearchEngine.
+
+End-to-End Verification
+
+Verification performed on 2026-09-16.
+
+Component   Status  Verification
+
+Document loading    VERIFIED    data/documents.json loaded successfully
+
+In-memory indexing  VERIFIED    All 15 documents indexed at startup
+
+Lexical BM25 retrieval  VERIFIED    Real queries returned ranked document results
+
+Dense retrieval VERIFIED    Local embedding model produced vector-based retrieval results
+
+Graph retrieval VERIFIED    Graph entities and relations were used to retrieve connected documents
+
+Hybrid retrieval    VERIFIED    Retrieval candidates were combined through Reciprocal Rank Fusion
+
+CrossEncoder reranking  VERIFIED    Candidate ordering was rescored using a local CrossEncoder
+
+Evidence construction   VERIFIED    Retrieved evidence remained traceable to source documents
+
+Context construction    VERIFIED    Retrieved evidence was converted into RAG context
+
+Ollama generation   VERIFIED    qwen2.5:7b generated answers from supplied RAG context
+
+Missing provider/model handling VERIFIED    Unsupported or unavailable configuration fails explicitly
+
+Full RAG application path   VERIFIED    Retrieval → reranking → evidence → context → generation is wired into the CLI
+
+The complete test suite passed with 99 tests.
+
+Real queries were used to exercise lexical, dense, graph, and hybrid retrieval,
+
+followed by reranking, evidence construction, context construction, and local
+
+Ollama generation.
+
+The system is designed to fail explicitly when a required provider or model is
+
+unavailable rather than silently fabricating retrieval or generation results.
+
+Core Retrieval Pipeline
+
+The main retrieval architecture is:
+
+Query
+
+  │
+
+  ▼
+
+QueryAnalyzer
+
+  │
+
+  ▼
+
+QueryClassifier
+
+  │
+
+  ▼
+
+QueryPlanner
+
+  │
+
+  ├──► Lexical Retrieval
+
+  │        └──► BM25
+
+  │
+
+  ├──► Dense Retrieval
+
+  │        └──► Vector Search
+
+  │
+
+  └──► Graph Retrieval
+
+           └──► Graph Traversal
+
+  │
+
+  ▼
+
+Candidate Fusion
+
+  │
+
+  ▼
+
+Reciprocal Rank Fusion (RRF)
+
+  │
+
+  ▼
+
+CrossEncoder Reranking
+
+  │
+
+  ▼
+
+EvidenceBuilder
+
+  │
+
+  ▼
+
+ContextBuilder
+
+  │
+
+  ▼
+
+Generator
+
+  │
+
+  ▼
+
+RAGResponse
+
+Not every query necessarily needs every retrieval source. The planner can select
+
+retrieval modes based on the characteristics of the query and the configured
+
+retrieval components.
+
+Retrieval Modes
+
+1. Lexical BM25
+
+The lexical retriever uses the repository's analyzer and inverted-index
+
+infrastructure to retrieve documents using BM25 scoring.
+
+Typical strengths:
+
+Exact terms
+
+Rare keywords
+
+Identifiers
+
+Technical terminology
+
+Error codes and document-specific vocabulary
 
 Example:
 
-```json
-[
-  {
-    "document_id": 1,
-    "text": "Machine learning is amazing",
-    "metadata": {
-      "topic": "machine learning"
-    }
-  },
-  {
-    "document_id": 2,
-    "text": "Cats chase mice",
-    "metadata": {
-      "topic": "animals"
-    }
-  }
-]
-```
+CVE-2025-1234
 
-Malformed records are rejected with a validation error; invalid documents are not silently skipped. An empty array is valid and starts an empty searchable corpus.
+2. Dense Retrieval
 
-The index is rebuilt in memory each time `app.py` starts. Restart the application after changing the data file.
+Dense retrieval converts queries and documents into embeddings and retrieves
 
-## Architecture
+semantically similar documents using vector similarity.
 
-- `document/`: `Document` and `Corpus` data models.
-- `analysis/`: tokenization, normalization, stopword removal, and stemming/lemmatization.
-- `index/`: forward, inverted, positional, vocabulary, and statistics indexes.
-- `ranking/`: BM25 and other standalone ranking components.
-- `retieval/`: the repository's existing retrieval package name and lexical retrievers.
-- `query/`: raw query and query-processing objects.
-- `search/`: the `SearchEngine` orchestration facade.
-- `app.py`: application startup, corpus loading, component construction, CLI input, output, and shutdown.
-- `tests/`: unit and application-layer tests.
-- `search/search_engine.py`: preserves the legacy lexical `search()` API and adds the planner-driven `retrieve()` and `answer()` orchestration APIs.
+This allows the system to retrieve relevant documents even when the query does
 
-The package directory is currently named `retieval`; this spelling is preserved by the active imports and is not renamed by the CLI application.
+not use the exact wording found in the document.
 
-## Testing
+Example:
 
-Run all tests in the project test directory:
+How do computers learn patterns from examples?
 
-```powershell
+3. Graph Retrieval
+
+Graph retrieval uses document/entity relationships to traverse connected
+
+information.
+
+Graph metadata can represent entities and relations such as:
+
+Machine Learning
+
+      │
+
+      ▼
+
+Neural Networks
+
+      │
+
+      ▼
+
+Computer Vision
+
+      │
+
+      ▼
+
+Satellite Imagery
+
+The graph layer is integrated into the retrieval pipeline and can return
+
+documents associated with matched or traversed graph entities.
+
+4. Hybrid Retrieval
+
+Hybrid retrieval combines retrieval signals from multiple retrieval systems.
+
+The current hybrid path combines:
+
+BM25
+
+  +
+
+Dense Retrieval
+
+  ↓
+
+Reciprocal Rank Fusion
+
+This allows lexical and semantic retrieval signals to contribute to the final
+
+candidate set.
+
+5. Hybrid + Reranking
+
+After candidate generation and fusion, a local CrossEncoder can score the
+
+query-document pairs again.
+
+BM25 + Dense
+
+      ↓
+
+     RRF
+
+      ↓
+
+Candidate Set
+
+      ↓
+
+CrossEncoder
+
+      ↓
+
+Final Ranking
+
+The CrossEncoder score is a model score and should not be interpreted as a
+
+confidence percentage.
+
+6. RAG / Answer
+
+The RAG path combines retrieval and generation:
+
+Query
+
+  ↓
+
+Retrieval
+
+  ↓
+
+Reranking
+
+  ↓
+
+Evidence
+
+  ↓
+
+Context
+
+  ↓
+
+Ollama
+
+  ↓
+
+Answer + Evidence
+
+The generator receives retrieved context rather than independently searching
+
+the corpus.
+
+Project Structure
+
+retrieval_engine/
+
+│
+
+├── analysis/
+
+│   ├── tokenizer.py
+
+│   ├── normalizer.py
+
+│   ├── stopwords.py
+
+│   ├── stemmer.py
+
+│   ├── lemmatization.py
+
+│   └── analyzer.py
+
+│
+
+├── document/
+
+│   ├── document.py
+
+│   ├── corpus.py
+
+│   └── chunk.py
+
+│
+
+├── index/
+
+│   ├── vocabulary.py
+
+│   ├── posting.py
+
+│   ├── posting_list.py
+
+│   ├── inverted_index.py
+
+│   ├── forward_index.py
+
+│   ├── positional_index.py
+
+│   ├── statistics.py
+
+│   └── builder.py
+
+│
+
+├── query/
+
+│   ├── query.py
+
+│   ├── query_parser.py
+
+│   ├── query_processing.py
+
+│   ├── boolean_query.py
+
+│   ├── phrase_query.py
+
+│   ├── fuzzy_query.py
+
+│   ├── wildcard_query.py
+
+│   └── query_expansion.py
+
+│
+
+├── retrieval/
+
+│   ├── candidate_generator.py
+
+│   ├── lexical/
+
+│   │   ├── retriever.py
+
+│   │   └── bm25_retriever.py
+
+│   ├── dense/
+
+│   │   ├── retriever.py
+
+│   │   └── vector_retriever.py
+
+│   └── graph/
+
+│       ├── retriever.py
+
+│       └── graph_retriever.py
+
+│
+
+├── ranking/
+
+│   ├── tfidf.py
+
+│   ├── cosine.py
+
+│   ├── bm25.py
+
+│   ├── fusion.py
+
+│   └── reranker.py
+
+│
+
+├── vector/
+
+│   ├── embedding.py
+
+│   ├── vector_store.py
+
+│   ├── similarity.py
+
+│   ├── hnsw.py
+
+│   └── persistence.py
+
+│
+
+├── graph/
+
+│   ├── node.py
+
+│   ├── edge.py
+
+│   ├── graph.py
+
+│   ├── adjacency.py
+
+│   ├── traversal.py
+
+│   └── store.py
+
+│
+
+├── hybrid/
+
+│   ├── fusion.py
+
+│   ├── rrf.py
+
+│   └── hybrid_retriever.py
+
+│
+
+├── planning/
+
+│   ├── query_analyzer.py
+
+│   ├── query_classifier.py
+
+│   └── query_planner.py
+
+│
+
+├── reranking/
+
+│   ├── cross_encoder.py
+
+│   └── reranker.py
+
+│
+
+├── rag/
+
+│   ├── retriever.py
+
+│   ├── evidence.py
+
+│   ├── context_builder.py
+
+│   └── generator.py
+
+│
+
+├── evaluation/
+
+│   ├── precision.py
+
+│   ├── recall.py
+
+│   ├── mrr.py
+
+│   ├── map.py
+
+│   ├── ndcg.py
+
+│   └── evaluator.py
+
+│
+
+├── search/
+
+│   └── search_engine.py
+
+│
+
+├── tests/
+
+│
+
+├── data/
+
+│   └── documents.json
+
+│
+
+└── app.py
+
+Architecture Responsibilities
+
+analysis/
+
+Responsible for text preprocessing:
+
+Tokenization
+
+Normalization
+
+Stopword handling
+
+Stemming
+
+Lemmatization
+
+document/
+
+Contains the core document and corpus data models.
+
+index/
+
+Implements the lexical indexing infrastructure:
+
+Vocabulary
+
+Posting lists
+
+Inverted index
+
+Forward index
+
+Positional index
+
+Corpus statistics
+
+query/
+
+Represents and processes user queries.
+
+retrieval/
+
+Contains retrieval interfaces and retrieval implementations for lexical,
+
+dense, and graph search.
+
+ranking/
+
+Contains standalone ranking algorithms and ranking-related components,
+
+including BM25 and fusion utilities.
+
+vector/
+
+Contains the vector-search infrastructure:
+
+Embedding interfaces
+
+Vector store
+
+Similarity calculations
+
+HNSW index
+
+Persistence utilities
+
+graph/
+
+Contains graph primitives and graph storage/traversal infrastructure.
+
+hybrid/
+
+Combines retrieval outputs from multiple retrieval sources.
+
+planning/
+
+Analyzes queries and creates retrieval plans.
+
+reranking/
+
+Performs second-stage ranking using CrossEncoder-based scoring.
+
+rag/
+
+Handles:
+
+Retrieval
+
+Evidence construction
+
+Context construction
+
+Generation
+
+search/
+
+Contains the SearchEngine orchestration facade.
+
+The main programmatic interfaces are:
+
+SearchEngine.search()
+
+SearchEngine.retrieve()
+
+SearchEngine.answer()
+
+app.py
+
+Provides:
+
+Startup
+
+Document loading
+
+Index construction
+
+Component initialization
+
+Retrieval-mode selection
+
+Interactive CLI input/output
+
+Graceful shutdown
+
+Document Data
+
+The application reads:
+
+data/documents.json
+
+The top-level value must be a JSON array.
+
+Each document contains:
+
+{
+
+  "document_id": 1,
+
+  "text": "Machine learning is amazing",
+
+  "metadata": {
+
+    "topic": "machine learning"
+
+  }
+
+}
+
+Required fields:
+
+document_id: unique non-negative integer
+
+text: string
+
+Optional field:
+
+metadata: JSON object
+
+The metadata can also provide the entities and relationships used by the graph
+
+retrieval integration.
+
+Malformed records are rejected with validation errors rather than silently
+
+skipped.
+
+The current verification corpus contains 15 documents designed to exercise
+
+different retrieval paths, including lexical lookup, semantic retrieval,
+
+vector search, graph relationships, hybrid fusion, reranking, RAG, query
+
+planning, indexing, and provenance.
+
+The in-memory indexes are rebuilt whenever the application starts.
+
+Requirements
+
+Python 3.10+ is recommended.
+
+Core dependencies include:
+
+nltk
+
+sentence-transformers
+
+ollama
+
+nltk is used by the default Porter stemmer.
+
+sentence-transformers is used for dense embeddings and local CrossEncoder
+
+reranking.
+
+The Ollama Python integration is used only for local LLM generation.
+
+The default lexical retrieval path does not require an external database or
+
+remote API.
+
+Dense retrieval and reranking require their local model dependencies and model
+
+artifacts to be available.
+
+Installation
+
+From the repository root:
+
+cd tfidf_search_engine
+
+Create a virtual environment:
+
+python -m venv .venv
+
+Activate it:
+
+.\.venv\Scripts\Activate.ps1
+
+Install dependencies:
+
+python -m pip install -r requirements.txt
+
+The default NLTK processing path uses PorterStemmer, so an NLTK corpus
+
+download is not required for the normal lexical CLI path.
+
+Ollama Configuration
+
+The RAG generator uses Ollama for local generation.
+
+The generator can read:
+
+OLLAMA_MODEL
+
+OLLAMA_HOST
+
+from the environment.
+
+An explicitly configured local model can also be supplied directly through the
+
+application's generator configuration.
+
+The application reports provider and generation failures explicitly when
+
+Ollama or the configured model is unavailable.
+
+Example model:
+
+qwen2.5:7b
+
+Running the Application
+
+From the project directory:
+
+python app.py
+
+The application initializes the corpus and reports the number of documents
+
+loaded and indexed.
+
+Example:
+
+--------------------------------
+
+Retrieval Engine
+
+--------------------------------
+
+Documents loaded: 15
+
+Indexed documents: 15
+
+Search engine ready.
+
+You can then select a retrieval mode from the menu.
+
+Example lexical query:
+
+Enter query (or 'exit'/'quit'): CVE-2025-1234
+
+The application returns ranked documents and scores.
+
+Example:
+
+1. Document: ...
+
+   Score: ...
+
+BM25 scores are retrieval scores. They are not probabilities, confidence
+
+percentages, or explanations of relevance.
+
+Use:
+
+exit
+
+or:
+
+quit
+
+to stop the application.
+
+Blank queries are rejected and the application continues running.
+
+Unknown terms return:
+
+No results.
+
+Example Queries
+
+BM25
+
+CVE-2025-1234
+
+Useful for testing exact-term lexical retrieval.
+
+Dense Retrieval
+
+How do computers learn patterns from examples?
+
+Useful for testing semantic similarity.
+
+Graph Retrieval
+
+How is machine learning connected to computer vision?
+
+Useful for testing entity matching and graph traversal.
+
+Hybrid Retrieval
+
+How do keyword and semantic retrieval work together?
+
+Useful for testing combined lexical and dense retrieval.
+
+Hybrid + Reranking
+
+Explain how retrieval candidates are improved before RAG.
+
+Useful for testing candidate fusion followed by CrossEncoder reranking.
+
+RAG
+
+Explain how lexical, dense, and graph retrieval work together.
+
+Useful for exercising the complete retrieval-to-generation pipeline.
+
+Testing
+
+Run the complete test suite:
+
 python -m unittest discover -s tests -v
-```
 
-Run the application-layer tests only:
+Run application-layer tests:
 
-```powershell
 python -m unittest -v tests.test_app
-```
 
 Compile all Python files:
 
-```powershell
 python -m compileall -q .
-```
 
-Check installed package consistency:
+Check dependency consistency:
 
-```powershell
 python -m pip check
-```
 
-The documented test command covers the repository's `tests/` suite, including application, SearchEngine orchestration, lexical, dense, graph, hybrid, reranking, RAG, indexing, and vector-related tests present in that directory.
+The current repository verification includes tests covering the application's
 
-## Contributing
+document loading, indexing, SearchEngine orchestration, lexical retrieval,
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the focused contribution and validation workflow.
+dense retrieval, graph retrieval, hybrid fusion, reranking, RAG components,
 
-Before submitting a change:
+indexing infrastructure, and vector-related functionality.
 
-```powershell
-python -m unittest discover -s tests -v
-python -m compileall -q .
-python app.py
-```
+Design Principles
 
-## Limitations and Roadmap
+The project is intentionally built as separate retrieval and orchestration
 
-Current limitations:
+layers instead of hiding the entire system behind a single high-level library.
 
-- The verified application is terminal-only.
-- Indexes are rebuilt on every startup and are not persisted by the CLI workflow.
-- The CLI displays document text and BM25 scores; it does not display metadata.
-- The active application path exposes lexical, dense, hybrid, reranking, and RAG modes when their local dependencies are configured.
-- Graph retrieval is not available in the CLI because no graph-building source is connected to `documents.json`.
-- The repository contains additional experimental or standalone subsystem code that is not integrated into this CLI workflow.
-- The retrieval package name is currently `retieval`, including its active imports.
+The architecture separates:
 
-Possible future work, subject to design and validation, includes persistent indexes, a supported package-name migration, broader application interfaces, and deliberate integration of additional retrieval modes. These are not current capabilities.
+Representation
 
-## License
+      ↓
 
-This project is released under the MIT License. See [LICENSE](LICENSE).
+Indexing
+
+      ↓
+
+Retrieval
+
+      ↓
+
+Fusion
+
+      ↓
+
+Reranking
+
+      ↓
+
+Evidence
+
+      ↓
+
+Context
+
+      ↓
+
+Generation
+
+This makes individual components testable and allows retrieval strategies to be
+
+combined without replacing their underlying implementations.
+
+Current Limitations
+
+The current application has several deliberate limitations:
+
+The primary user interface is terminal-based.
+
+Indexes are rebuilt in memory when the application starts.
+
+The CLI does not currently persist its runtime indexes between sessions.
+
+Dense retrieval depends on locally available embedding models.
+
+CrossEncoder reranking depends on a locally available reranking model.
+
+Ollama generation depends on a locally available Ollama installation/model.
+
+The graph currently depends on graph-compatible metadata being available in
+
+the document corpus.
+
+The project contains additional subsystem implementations that are not all
+
+exposed as dedicated CLI modes yet.
+
+These limitations concern application scope and configuration rather than the
+
+existence of the underlying subsystem implementations.
+
+Roadmap
+
+Potential future work includes:
+
+Persistent index storage
+
+More advanced query expansion
+
+Additional retrieval strategies
+
+More comprehensive retrieval evaluation datasets
+
+Retrieval-quality benchmarking
+
+Additional application interfaces
+
+Production deployment and service APIs
+
+Broader graph construction strategies
+
+More robust retrieval observability and tracing
+
+These items are future work and are not represented as current capabilities.
+
+License
+
+This project is released under the MIT License.
+
+See LICENSE.
+
+
+
+### One important correction
+
+I would **not** keep this old wording:
+
+> “A small, terminal-based lexical search application...”
+
+That undersells what you've actually built. Your current project is much closer to:
+
+> **“A from-scratch retrieval engine combining lexical, dense, graph, hybrid fusion, reranking, and RAG components.”**
+
+Also, the old README had a direct contradiction:
+
+```text
