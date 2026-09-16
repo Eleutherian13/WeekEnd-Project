@@ -1,22 +1,29 @@
+import unittest
+
 from index.posting import Posting
 
 
-def test_posting() : 
+class TestPosting(unittest.TestCase):
+    def test_valid_posting_preserves_fields_and_type(self):
+        posting = Posting(document_id=1, term_frequency=2)
 
-    posting = Posting(document_id = 1 , term_frequency = 2) 
+        self.assertIsInstance(posting, Posting)
+        self.assertEqual(posting.document_id, 1)
+        self.assertEqual(posting.term_frequency, 2)
 
-    assert posting.document_id == 1
-    assert posting.term_frequency == 2
+    def test_invalid_posting_values_are_rejected(self):
+        with self.assertRaises(TypeError):
+            Posting(document_id="1", term_frequency=2)
 
-    assert repr(posting) == "Posting(document_id=1, term_frequency=2)"
+        with self.assertRaises(ValueError):
+            Posting(document_id=1, term_frequency=-1)
 
-    assert str(posting) == "Posting(document_id=1, term_frequency=2)"
+        self.assertEqual(
+            Posting(document_id=1, term_frequency=True).term_frequency,
+            True,
+        )
 
 
-    print(posting)
-
-    print(posting.document_id)
-    print(posting.term_frequency)
-
-test_posting()
+if __name__ == "__main__":
+    unittest.main()
 

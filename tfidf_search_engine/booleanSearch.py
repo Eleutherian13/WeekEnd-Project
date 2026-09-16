@@ -63,6 +63,7 @@ def boolean_search(query) :
     return result
 
 print(boolean_search("ai"))
+print("kun faya kun ")
 
 
 

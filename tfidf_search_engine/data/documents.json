@@ -1,0 +1,32 @@
+[
+	{
+		"document_id": 1,
+		"text": "Machine learning is amazing",
+		"metadata": {"topic": "machine learning"}
+	},
+	{
+		"document_id": 2,
+		"text": "Deep learning powers artificial intelligence",
+		"metadata": {"topic": "artificial intelligence"}
+	},
+	{
+		"document_id": 3,
+		"text": "Machine learning uses neural networks",
+		"metadata": {"topic": "machine learning"}
+	},
+	{
+		"document_id": 4,
+		"text": "Cats chase mice",
+		"metadata": {"topic": "animals"}
+	},
+	{
+		"document_id": 5,
+		"text": "Dogs chase cats",
+		"metadata": {"topic": "animals"}
+	},
+	{
+		"document_id": 6,
+		"text": "Deep neural networks power AI",
+		"metadata": {"topic": "artificial intelligence"}
+	}
+]

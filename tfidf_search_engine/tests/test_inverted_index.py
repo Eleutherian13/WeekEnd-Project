@@ -1,47 +1,42 @@
-from index.inverted_index import InvertedIndex 
-from index.posting import Posting 
-from index.posting_list import PostingList 
+import unittest
 
-index = InvertedIndex()
+from index.inverted_index import InvertedIndex
+from index.posting import Posting
 
-# this created a new dict of [str , PostingList]
 
-index.add(
-    "machine",
-    Posting(
-        document_id=1,
-        term_frequency=2
-    )
-)
+class TestInvertedIndex(unittest.TestCase):
+    def test_add_and_retrieve_postings(self):
+        index = InvertedIndex()
+        index.add("machine", Posting(1, 2))
+        index.add("machine", Posting(3, 1))
 
-index.add(
-    "machine",
-    Posting(
-        document_id=3,
-        term_frequency=1
-    )
-)
+        postings = index.get_postings("machine")
 
-index.add(
-    "learning",
-    Posting(
-        document_id=1,
-        term_frequency=1
-    )
-)
+        self.assertIsNotNone(postings)
+        self.assertEqual(
+            [(posting.document_id, posting.term_frequency)
+             for posting in postings],
+            [(1, 2), (3, 1)],
+        )
+        self.assertTrue(index.contain("machine"))
+        self.assertFalse(index.contain("missing"))
 
-index.add(
-    "learning",
-    Posting(
-        document_id=2,
-        term_frequency=1
-    )
-)
+    def test_duplicate_document_posting_is_rejected(self):
+        index = InvertedIndex()
+        index.add("machine", Posting(1, 1))
 
-index.add(
-    "learning",
-    Posting(
-        document_id=3,
-        term_frequency=1
-    )
-)
+        with self.assertRaises(ValueError):
+            index.add("machine", Posting(1, 2))
+
+    def test_invalid_inputs_are_rejected(self):
+        index = InvertedIndex()
+
+        with self.assertRaises(TypeError):
+            index.add(1, Posting(1, 1))
+
+        with self.assertRaises(TypeError):
+            index.add("machine", "not a posting")
+
+
+if __name__ == "__main__":
+    unittest.main()

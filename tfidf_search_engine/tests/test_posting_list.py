@@ -1,50 +1,36 @@
-from index.posting_list import PostingList 
-from index.posting import Posting 
+import unittest
 
-posting_list = PostingList()
-
-posting_list.add(
-    Posting(
-        document_id=1,
-        term_frequency=2
-    )
-)
-
-posting_list.add(
-    Posting(
-        document_id=3,
-        term_frequency=1
-    )
-)
-
-posting_list.add(
-    Posting(
-        document_id=6,
-        term_frequency=4
-    )
-)
-print("Posting List : ")
-
-for posting in posting_list : 
-    print(posting)
-
-print("Document Frequency : ")
-print(posting_list.document_frequency)
-
-print("Get posting : ")
-print(posting_list.get(1))
-print(posting_list.get(3))
-print(posting_list.get(6))
-
-print("Length : ")
-print(len(posting_list))
-
-print("Iterator : ")
-
-print("\nDocument 3:")
-print(posting_list.get(3))
+from index.posting import Posting
+from index.posting_list import PostingList
 
 
-print("\nDocument 5:")
-print(posting_list.get(5))
+class TestPostingList(unittest.TestCase):
+    def test_add_get_iteration_and_frequency(self):
+        postings = PostingList()
+        postings.add(Posting(1, 2))
+        postings.add(Posting(3, 1))
+
+        self.assertEqual(len(postings), 2)
+        self.assertEqual(postings.document_frequency, 2)
+        self.assertEqual(postings.get(1), Posting(1, 2))
+        self.assertIsNone(postings.get(9))
+        self.assertEqual(
+            [posting.document_id for posting in postings],
+            [1, 3],
+        )
+
+    def test_duplicate_document_ids_are_rejected(self):
+        postings = PostingList()
+        postings.add(Posting(1, 1))
+
+        with self.assertRaises(ValueError):
+            postings.add(Posting(1, 2))
+
+    def test_non_posting_values_are_rejected(self):
+        with self.assertRaises(TypeError):
+            PostingList().add("posting")
+
+
+if __name__ == "__main__":
+    unittest.main()
 

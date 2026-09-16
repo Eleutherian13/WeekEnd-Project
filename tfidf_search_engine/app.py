@@ -1,278 +1,136 @@
-from index.inverted_index import InvertedIndex
-from index.posting import Posting
-from index.posting_list import PostingList
-from index.builder import IndexBuilder
-from index.vocabulary import Vocabulary
-from retieval.candidate_generator import CandidateGenerator
-from retieval.lexical.retriever import LexicalRetriever
+import json
+from pathlib import Path
+
 from analysis.analyzer import Analyzer
+from document.corpus import Corpus
+from document.documents import Document
+from index.builder import IndexBuilder
+from index.inverted_index import InvertedIndex
+from index.vocabulary import Vocabulary
+from query.query_processing import QueryProcessor
+from ranking.bm25 import BM25
+from retieval.candidate_generator import CandidateGenerator
+from retieval.lexical.bm25_retriever import BM25Retriever
+from search.search_engine import SearchEngine
 
 
-def test_candidate_generator():
-    print("\n=== CANDIDATE GENERATOR TEST ===")
+DATA_PATH = Path(__file__).with_name("data") / "documents.json"
 
-    # ---------------------------------------------------------
-    # 1. Build a small inverted index from scratch
-    # ---------------------------------------------------------
 
-    inverted_index = InvertedIndex()
+def load_corpus(path: Path = DATA_PATH) -> Corpus:
+    try:
+        with path.open(encoding="utf-8") as file:
+            records = json.load(file)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"invalid JSON in {path}: {error.msg}") from error
 
-    # machine -> documents 1 and 3
-    inverted_index.add(
-        "machine",
-        Posting(document_id=1, term_frequency=1),
+    if not isinstance(records, list):
+        raise ValueError(f"{path} must contain a list of document records")
+
+    corpus = Corpus()
+    for position, record in enumerate(records, start=1):
+        if not isinstance(record, dict):
+            raise ValueError(
+                f"document record {position} must be an object"
+            )
+
+        missing_fields = {"document_id", "text"} - record.keys()
+        if missing_fields:
+            fields = ", ".join(sorted(missing_fields))
+            raise ValueError(
+                f"document record {position} is missing: {fields}"
+            )
+
+        metadata = record.get("metadata", {})
+        if not isinstance(metadata, dict):
+            raise ValueError(
+                f"document record {position} metadata must be an object"
+            )
+
+        try:
+            document = Document(
+                document_id=record["document_id"],
+                text=record["text"],
+                metadata=metadata,
+            )
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                f"invalid document record {position}: {error}"
+            ) from error
+
+        try:
+            corpus.add(document)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                f"invalid document record {position}: {error}"
+            ) from error
+
+    return corpus
+
+
+def create_search_engine(corpus: Corpus) -> SearchEngine:
+    analyzer = Analyzer()
+    builder = IndexBuilder(
+        analyzer=analyzer,
+        vocabulary=Vocabulary(),
+        inverted_index=InvertedIndex(),
     )
 
-    inverted_index.add(
-        "machine",
-        Posting(document_id=3, term_frequency=1),
+    for document in corpus:
+        builder.add_document(document)
+
+    retriever = BM25Retriever(
+        candidate_generator=CandidateGenerator(builder.inverted_index),
+        scorer=BM25(builder.forward_index, builder.statistics),
     )
 
-    # learning -> documents 1, 2 and 3
-    inverted_index.add(
-        "learning",
-        Posting(document_id=1, term_frequency=1),
+    return SearchEngine(
+        query_processor=QueryProcessor(analyzer),
+        lexical_retriever=retriever,
     )
 
-    inverted_index.add(
-        "learning",
-        Posting(document_id=2, term_frequency=1),
-    )
 
-    inverted_index.add(
-        "learning",
-        Posting(document_id=3, term_frequency=1),
-    )
+def run() -> None:
+    print("--------------------------------")
+    print("Retrieval Engine")
+    print("--------------------------------")
 
-    # ---------------------------------------------------------
-    # 2. Create CandidateGenerator
-    # ---------------------------------------------------------
+    corpus = load_corpus()
+    engine = create_search_engine(corpus)
 
-    candidate_generator = CandidateGenerator(
-        inverted_index=inverted_index
-    )
-
-    # ---------------------------------------------------------
-    # 3. Single-term candidate generation
-    # ---------------------------------------------------------
-
-    candidates = candidate_generator.generate(["machine"])
-
-    print("machine candidates:")
-    print(candidates)
-
-    assert candidates == {1, 3}
-
-    print("✓ Single-term candidate generation passed")
-
-    # ---------------------------------------------------------
-    # 4. Multi-term candidate generation
-    # ---------------------------------------------------------
-
-    candidates = candidate_generator.generate(
-        ["machine", "learning"]
-    )
-
-    print("\nmachine + learning candidates:")
-    print(candidates)
-
-    assert candidates == {1, 2, 3}
-
-    print("✓ Multi-term OR candidate generation passed")
-
-    # ---------------------------------------------------------
-    # 5. Unknown term
-    # ---------------------------------------------------------
-
-    candidates = candidate_generator.generate(
-        ["nonexistent"]
-    )
-
-    print("\nnonexistent candidates:")
-    print(candidates)
-
-    assert candidates == set()
-
-    print("✓ Unknown-term handling passed")
-
-    # ---------------------------------------------------------
-    # 6. Known + unknown term
-    # ---------------------------------------------------------
-
-    candidates = candidate_generator.generate(
-        ["machine", "nonexistent"]
-    )
-
-    print("\nmachine + nonexistent candidates:")
-    print(candidates)
-
-    assert candidates == {1, 3}
-
-    print("✓ Known + unknown term handling passed")
-
-    # ---------------------------------------------------------
-    # 7. Empty query
-    # ---------------------------------------------------------
-
-    candidates = candidate_generator.generate([])
-
-    print("\nempty query candidates:")
-    print(candidates)
-
-    assert candidates == set()
-
-    print("✓ Empty-query handling passed")
-
-    # ---------------------------------------------------------
-    # 8. Whitespace handling
-    # ---------------------------------------------------------
-
-    candidates = candidate_generator.generate(
-        [" machine "]
-    )
-
-    print("\nwhitespace-normalized term candidates:")
-    print(candidates)
-
-    assert candidates == {1, 3}
-
-    print("✓ Whitespace handling passed")
-
-    # ---------------------------------------------------------
-    # 9. Empty strings
-    # ---------------------------------------------------------
-
-    candidates = candidate_generator.generate(
-        ["", "   ", "machine"]
-    )
-
-    print("\nempty-string candidates:")
-    print(candidates)
-
-    assert candidates == {1, 3}
-
-    print("✓ Empty-string handling passed")
-
-    # ---------------------------------------------------------
-    # 10. Callable interface
-    # ---------------------------------------------------------
-
-    candidates = candidate_generator(
-        ["learning"]
-    )
-
-    print("\ncallable interface candidates:")
-    print(candidates)
-
-    assert candidates == {1, 2, 3}
-
-    print("✓ Callable interface passed")
-
-    # ---------------------------------------------------------
-    # 11. None validation
-    # ---------------------------------------------------------
+    print(f"Documents loaded: {len(corpus)}")
+    if not corpus:
+        print("No documents available for searching.")
+    else:
+        print(f"Indexed documents: {len(corpus)}")
+    print("Search engine ready.")
 
     try:
-        candidate_generator.generate(None)
-        assert False, "Expected TypeError for None"
-    except TypeError:
-        print("✓ None validation passed")
+        while True:
+            query = input("\nEnter query (or 'exit'/'quit'): ").strip()
+            if query.lower() in {"exit", "quit"}:
+                break
 
-    # ---------------------------------------------------------
-    # 12. Invalid query term validation
-    # ---------------------------------------------------------
+            if not query:
+                print("Please enter a query.")
+                continue
 
-    try:
-        candidate_generator.generate(
-            ["machine", 123]
-        )
-        assert False, "Expected TypeError for non-string term"
-    except TypeError:
-        print("✓ Invalid-term validation passed")
+            results = engine.search(query)
+            if not results:
+                print("No results.")
+                continue
 
-    # ---------------------------------------------------------
-    # 13. Constructor validation
-    # ---------------------------------------------------------
+            for position, (document_id, score) in enumerate(results, start=1):
+                document = corpus[document_id]
+                print(f"\n{position}. Document: {document.text}")
+                print(f"   Score: {score:.4f}")
+    except EOFError:
+        pass
+    except KeyboardInterrupt:
+        print()
 
-    try:
-        CandidateGenerator(None)
-        assert False, "Expected TypeError for invalid inverted index"
-    except TypeError:
-        print("✓ Constructor validation passed")
-
-    print("\n✓ ALL CANDIDATE GENERATOR TESTS PASSED")
-
-
-class DummyLexicalRetriever(LexicalRetriever):
-    """
-    Temporary test implementation used only to verify
-    the LexicalRetriever abstraction.
-    """
-
-    def retrieve(self, query_terms):
-        candidates = self.candidate_generator.generate(query_terms)
-
-        return [
-            (document_id, 1.0)
-            for document_id in sorted(candidates)
-        ]
-
-
-def test_lexical_retriever(builder):
-    candidate_generator = CandidateGenerator(
-        inverted_index=builder.inverted_index
-    )
-
-    retriever = DummyLexicalRetriever(
-        candidate_generator=candidate_generator
-    )
-
-    results = retriever.retrieve(
-        ["machine", "learning"]
-    )
-
-    print("Retriever results:", results)
-
-    assert results == [
-        (1, 1.0),
-        (2, 1.0),
-        (3, 1.0),
-    ]
-
-    # Test callable interface.
-    results = retriever(["machine"])
-
-    assert results == [
-        (1, 1.0),
-        (3, 1.0),
-    ]
-
-    print("LexicalRetriever contract tests passed.")
+    print("\nGoodbye.")
 
 
 if __name__ == "__main__":
-    test_candidate_generator()
-    
-    # Create a simple builder for testing lexical retriever
-    analyzer = Analyzer()
-    vocabulary = Vocabulary()
-    inverted_index = InvertedIndex()
-    builder = IndexBuilder(
-        analyzer=analyzer,
-        vocabulary=vocabulary,
-        inverted_index=inverted_index
-    )
-    
-    # Add sample documents to the builder's inverted index
-    # Document 1: contains "machine" and "learning"
-    inverted_index.add("machine", Posting(document_id=1, term_frequency=1))
-    inverted_index.add("learning", Posting(document_id=1, term_frequency=1))
-    
-    # Document 2: contains "learning"
-    inverted_index.add("learning", Posting(document_id=2, term_frequency=1))
-    
-    # Document 3: contains "machine" and "learning"
-    inverted_index.add("machine", Posting(document_id=3, term_frequency=1))
-    inverted_index.add("learning", Posting(document_id=3, term_frequency=1))
-    
-    test_lexical_retriever(builder)
+    run()
